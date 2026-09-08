@@ -96,12 +96,19 @@
   .dot.on-a{ background:var(--a); } .dot.on-b{ background:var(--b); }
 
   .points{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; }
+  .num-col{ display:flex; flex-direction:column; align-items:center; gap:0; }
   .points .num{
     font-family:'Big Shoulders Display',sans-serif; font-weight:900; font-size:68px; line-height:.9;
     font-variant-numeric:tabular-nums; text-align:center;
   }
   .points .num.a{ color:var(--a); } .points .num.b{ color:var(--b); }
   .points .sep{ font-family:'Big Shoulders Display',sans-serif; font-size:32px; color:var(--ink-dim); font-weight:700; }
+  .stepper{
+    background:none; border:none; color:var(--ink-dim); cursor:pointer; line-height:1;
+    padding:5px 16px; font-size:13px;
+  }
+  .stepper:hover{ color:var(--court); }
+  .stepper:active{ transform:scale(.85); }
   .serve-tag{
     font-family:'JetBrains Mono',monospace; font-size:11px; text-align:center; letter-spacing:.06em;
     text-transform:uppercase; color:var(--ink-dim); margin-top:2px;
@@ -136,7 +143,7 @@
   .outbtn.a{ border-color:var(--a); color:var(--a); } .outbtn.b{ border-color:var(--b); color:var(--b); }
   .outbtn:active{ transform:scale(.98); }
 
-  .microrow{ display:flex; justify-content:space-between; gap:8px; }
+  .microrow{ display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
   .micro{
     background:none; border:none; color:var(--ink-dim); font-family:'JetBrains Mono',monospace;
     font-size:11px; text-decoration:underline; cursor:pointer; padding:4px 0;
@@ -586,6 +593,7 @@ function demoState(){
   return {
     nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], isDemo:true,
     matchId:null, matchStartMs:null, lastPointMs:null, dbCreated:false,
+    gamesCompleted:0, setsCompleted:0,
   };
 }
 function startFreshMatch(){
@@ -594,6 +602,7 @@ function startFreshMatch(){
     ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[],
     history:[], isDemo:false,
     matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
+    gamesCompleted:0, setsCompleted:0,
   };
 }
 
@@ -618,6 +627,8 @@ if(state.matchId === undefined) state.matchId = null;
 if(state.matchStartMs === undefined) state.matchStartMs = null;
 if(state.lastPointMs === undefined) state.lastPointMs = null;
 if(state.dbCreated === undefined) state.dbCreated = false;
+if(state.gamesCompleted === undefined) state.gamesCompleted = 0;
+if(state.setsCompleted === undefined) state.setsCompleted = 0;
 
 function load(){
   try{
@@ -681,17 +692,37 @@ function renderScorecard(score, nameA, nameB){
         ${score.inTiebreak ? " · tiebreak" : ""}
       </div>
       <div class="points">
-        <div class="num a">${pa}</div>
+        <div class="num-col">
+          <button class="stepper" data-side="0" data-dir="1">▲</button>
+          <div class="num a">${pa}</div>
+          <button class="stepper" data-side="0" data-dir="-1">▼</button>
+        </div>
         <div class="sep">–</div>
-        <div class="num b">${pb}</div>
+        <div class="num-col">
+          <button class="stepper" data-side="1" data-dir="1">▲</button>
+          <div class="num b">${pb}</div>
+          <button class="stepper" data-side="1" data-dir="-1">▼</button>
+        </div>
       </div>
       <div class="serve-tag"><span class="dot on-${srvSide}"></span>${srvName} serving</div>
     </div>`;
 }
 
 function renderControls(score, nameA, nameB){
+  const haveHistory = state.history && state.history.length;
+  const removeRow = `
+    <div class="microrow" style="margin-top:8px;">
+      <button class="micro" id="undoTap" ${state.rally.length?"":"disabled"}>undo tap</button>
+      <button class="micro" id="removeLastPoint" ${haveHistory?"":"disabled"}>remove last point</button>
+      <button class="micro" id="removeLastGame" ${haveHistory?"":"disabled"}>remove last game</button>
+      <button class="micro" id="removeLastSet" ${haveHistory?"":"disabled"}>remove last set</button>
+    </div>`;
+
   if(score.winner!==null){
-    $("#live-controls").innerHTML = `<button class="newmatch" id="newMatchMain">Start new match</button>`;
+    $("#live-controls").innerHTML = `
+      <button class="newmatch" id="newMatchMain">Start new match</button>
+      ${removeRow}
+      <p class="predict-caption" style="margin-top:6px;">Match finished by mistake? Use remove last point/game/set above to walk it back — the match resumes once the score is no longer complete.</p>`;
     return;
   }
   const rally = state.rally;
@@ -712,10 +743,7 @@ function renderControls(score, nameA, nameB){
       <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}<span class="kbd-hint"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></span></button>
       <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}<span class="kbd-hint"><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></span></button>
     </div>
-    <div class="microrow" style="margin-top:8px;">
-      <button class="micro" id="undoTap" ${rally.length?"":"disabled"}>undo tap</button>
-      <button class="micro" id="undoPoint" ${state.history && state.history.length?"":"disabled"}>undo last point</button>
-    </div>`;
+    ${removeRow}`;
 }
 
 function renderPredict(score){
@@ -798,10 +826,14 @@ function finalizePoint(winner){
     serverPts: JSON.parse(JSON.stringify(state.serverPts)),
     log: state.log.slice(),
     lastPointMs: state.lastPointMs,
+    gamesBefore: state.gamesCompleted,
+    setsBefore: state.setsCompleted,
   });
 
   state.serverPts[server][winner===server?0:1] += 1;
   const events = awardPoint(state.score, winner, fmt);
+  if(events.some(e=>e.startsWith("game")||e.startsWith("BREAK"))) state.gamesCompleted += 1;
+  if(events.some(e=>e.startsWith("SET"))) state.setsCompleted += 1;
   state.log.unshift({
     desc: describeRally(hitters, winner, server),
     server, winner, hitters, events, line: scoreLineShort(state.score),
@@ -813,6 +845,46 @@ function finalizePoint(winner){
   syncMatchToDb();
 }
 
+function adjustPoint(side, dir){
+  if(state.score.winner !== null) return;
+  state.score.points[side] = Math.max(0, state.score.points[side] + dir);
+  save(); render();
+}
+
+/* Shared restore for all three "remove last ___" actions: each just
+   decides how many history entries to pop before restoring. */
+function restoreFrom(entry){
+  state.score = entry.score; state.serverPts = entry.serverPts; state.log = entry.log;
+  state.lastPointMs = entry.lastPointMs;
+  state.gamesCompleted = entry.gamesBefore; state.setsCompleted = entry.setsBefore;
+  save(); render();
+  syncMatchToDb();
+}
+function removeLastPoint(){
+  if(!state.history.length) return;
+  restoreFrom(state.history.pop());
+}
+function removeLastGame(){
+  // every point belonging to the same (in-progress or just-finished) game
+  // shares the same gamesBefore value, so pop back past all of them.
+  if(!state.history.length) return;
+  const g = state.history[state.history.length-1].gamesBefore;
+  let entry = null;
+  while(state.history.length && state.history[state.history.length-1].gamesBefore === g){
+    entry = state.history.pop();
+  }
+  if(entry) restoreFrom(entry);
+}
+function removeLastSet(){
+  if(!state.history.length) return;
+  const s = state.history[state.history.length-1].setsBefore;
+  let entry = null;
+  while(state.history.length && state.history[state.history.length-1].setsBefore === s){
+    entry = state.history.pop();
+  }
+  if(entry) restoreFrom(entry);
+}
+
 document.addEventListener("click", (e) => {
   const id = e.target.id;
   if(id==="hitA"){ addHit(0); }
@@ -820,15 +892,9 @@ document.addEventListener("click", (e) => {
   else if(id==="winA"){ finalizePoint(0); }
   else if(id==="winB"){ finalizePoint(1); }
   else if(id==="undoTap"){ state.rally.pop(); state.rallyTimes.pop(); save(); render(); }
-  else if(id==="undoPoint"){
-    if(state.history && state.history.length){
-      const prev = state.history.pop();
-      state.score = prev.score; state.serverPts = prev.serverPts; state.log = prev.log;
-      state.lastPointMs = prev.lastPointMs;
-      save(); render();
-      syncMatchToDb();
-    }
-  }
+  else if(id==="removeLastPoint"){ removeLastPoint(); }
+  else if(id==="removeLastGame"){ removeLastGame(); }
+  else if(id==="removeLastSet"){ removeLastSet(); }
   else if(id==="newMatchTop" || id==="newMatchMain" || id==="clearDemo"){
     startFreshMatch();
     save(); render();
@@ -838,6 +904,8 @@ document.addEventListener("click", (e) => {
   else if(id==="refreshPlayers"){ loadMatches(); }
   else if(id==="backToPlayers"){ playersView.screen="list"; playersView.selected=null; renderPlayersView(); }
   else {
+    const stepBtn = e.target.closest ? e.target.closest(".stepper") : null;
+    if(stepBtn){ adjustPoint(Number(stepBtn.dataset.side), Number(stepBtn.dataset.dir)); return; }
     const row = e.target.closest ? e.target.closest(".player-row") : null;
     if(row){ playersView.selected = row.dataset.player; playersView.screen="profile"; renderPlayersView(); }
   }
