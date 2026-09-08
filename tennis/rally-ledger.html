@@ -146,6 +146,10 @@
   .rally-empty{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim); font-style:italic; }
   .rdot{ width:13px; height:13px; border-radius:50%; }
   .rdot.a{ background:var(--a); } .rdot.b{ background:var(--b); }
+  .rcross{
+    width:13px; height:13px; line-height:13px; text-align:center; font-size:13px; font-weight:800;
+    color:var(--ink-dim); font-family:'JetBrains Mono',monospace;
+  }
 
   .tapgrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .tap{
@@ -375,7 +379,9 @@
       same player can't hit twice in a row — a rally always alternates). <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd>
       ends the point for the left-hand player, <kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd>
       ends it for the right-hand player. <kbd>F</kbd> marks a serve fault,
-      <kbd>T</kbd> discards a let/replay without scoring it.
+      <kbd>T</kbd> discards a let/replay without scoring it, and <kbd>B</kbd>
+      (or the "mark ✕" button) drops a ✕ into the Rally track as a plain
+      visual note — it doesn't count as a hit or change the description.
     </p>
   </div>
 
@@ -1000,7 +1006,7 @@ function demoState(){
     log.unshift({ desc:describeRally(hitters,winner,server,1), server, winner, hitters, events, line:scoreLineShort(score), serveNumber:1 });
   }
   return {
-    nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], serveFaults:0, isDemo:true,
+    nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], rallyTokens:[], serveFaults:0, isDemo:true,
     matchId:null, matchStartMs:null, lastPointMs:null, dbCreated:false,
     gamesCompleted:0, setsCompleted:0,
   };
@@ -1008,7 +1014,7 @@ function demoState(){
 function startFreshMatch(){
   const keepNames = { nameA: state.nameA, nameB: state.nameB, fmtKey: state.fmtKey };
   state = {
-    ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[], serveFaults:0,
+    ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[], rallyTokens:[], serveFaults:0,
     history:[], isDemo:false,
     matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
     gamesCompleted:0, setsCompleted:0,
@@ -1039,6 +1045,7 @@ function scoreLineShort(s){
 let state = load() || demoState();
 state.rally = state.rally || [];
 state.rallyTimes = state.rallyTimes || [];
+state.rallyTokens = state.rallyTokens || [];
 if(state.serveFaults === undefined) state.serveFaults = 0;
 state.history = state.history || [];
 if(state.matchId === undefined) state.matchId = null;
@@ -1186,7 +1193,7 @@ function renderControls(score, nameA, nameB){
   const haveHistory = state.history && state.history.length;
   const removeRow = `
     <div class="microrow" style="margin-top:8px;">
-      <button class="micro" id="undoTap" ${state.rally.length?"":"disabled"}>undo tap</button>
+      <button class="micro" id="undoTap" ${(state.rallyTokens&&state.rallyTokens.length)?"":"disabled"}>undo tap</button>
       <button class="micro" id="removeLastPoint" ${haveHistory?"":"disabled"}>remove last point</button>
       <button class="micro" id="removeLastGame" ${haveHistory?"":"disabled"}>remove last game</button>
       <button class="micro" id="removeLastSet" ${haveHistory?"":"disabled"}>remove last set</button>
@@ -1199,14 +1206,19 @@ function renderControls(score, nameA, nameB){
       <p class="predict-caption" style="margin-top:6px;">Match finished by mistake? Use remove last point/game/set above to walk it back — the match resumes once the score is no longer complete.</p>`;
     return;
   }
-  const rally = state.rally;
-  const dots = rally.length
-    ? rally.map(h=>`<span class="rdot ${h===0?"a":"b"}"></span>`).join("")
+  const tokens = state.rallyTokens || [];
+  const dots = tokens.length
+    ? tokens.map(t => t.type==="cross"
+        ? `<span class="rcross">✕</span>`
+        : `<span class="rdot ${t.side===0?"a":"b"}"></span>`).join("")
     : `<span class="rally-empty">(serve — tap Point → once it's decided, or tap HIT to log the rally)</span>`;
 
   $("#live-controls").innerHTML = `
     <div>
-      <p class="section-label">Rally</p>
+      <div class="row" style="justify-content:space-between; align-items:baseline;">
+        <p class="section-label">Rally</p>
+        <button class="micro" id="markCross">mark ✕</button>
+      </div>
       <div class="rally-track">${dots}</div>
     </div>
     <div class="tapgrid" style="margin-top:8px;">
@@ -1282,14 +1294,35 @@ function escapeHtml(str){
 function addHit(side){
   if(state.rally.length && state.rally[state.rally.length-1]===side) return; // same player can't hit twice in a row
   if(state.isDemo) startFreshMatch();
+  state.rallyTokens = state.rallyTokens || [];
   if(state.rally.length===0 && side !== state.score.server){
     // the server always strikes first — if the returner is tapped first,
     // the serve happened too, it just wasn't tapped. Without this, a
     // lone returner hit reads as a 1-hit point and gets mislabeled a
     // double fault instead of a return winner/error.
     state.rally.push(state.score.server); state.rallyTimes.push(Date.now());
+    state.rallyTokens.push({ type:"hit", side: state.score.server });
   }
   state.rally.push(side); state.rallyTimes.push(Date.now());
+  state.rallyTokens.push({ type:"hit", side });
+  save(); render();
+}
+
+/* A "cross" is a visual-only marker in the Rally track — it does not
+   go into state.rally, so it never affects rally length, the last-
+   hitter derivation, or the point description. Purely a note. */
+function addCross(){
+  if(state.score.winner !== null) return;
+  if(state.isDemo) startFreshMatch();
+  state.rallyTokens = state.rallyTokens || [];
+  state.rallyTokens.push({ type:"cross" });
+  save(); render();
+}
+
+function undoLastToken(){
+  if(!state.rallyTokens || !state.rallyTokens.length) return;
+  const last = state.rallyTokens.pop();
+  if(last.type==="hit"){ state.rally.pop(); state.rallyTimes.pop(); }
   save(); render();
 }
 
@@ -1343,7 +1376,7 @@ function finalizePoint(winner){
     server, winner, hitters, events, line: scoreLineShort(state.score),
     isPressure, pressureType, tMs: now, gapMs, rallyMs, serveNumber,
   });
-  state.rally = []; state.rallyTimes = []; state.serveFaults = 0;
+  state.rally = []; state.rallyTimes = []; state.rallyTokens = []; state.serveFaults = 0;
   state.lastPointMs = now;
   save(); render();
   syncMatchToDb();
@@ -1428,7 +1461,8 @@ document.addEventListener("click", (e) => {
   else if(id==="winA"){ finalizePoint(0); }
   else if(id==="winB"){ finalizePoint(1); }
   else if(id==="faultBtn"){ addFault(); }
-  else if(id==="undoTap"){ state.rally.pop(); state.rallyTimes.pop(); save(); render(); }
+  else if(id==="undoTap"){ undoLastToken(); }
+  else if(id==="markCross"){ addCross(); }
   else if(id==="removeLastPoint"){ removeLastPoint(); }
   else if(id==="removeLastGame"){ removeLastGame(); }
   else if(id==="removeLastSet"){ removeLastSet(); }
@@ -1471,12 +1505,13 @@ function renderNamesDependent(){
 }
 
 /* ============================================================
-   Keyboard input. a/l log a hit — the same player can't log two
-   hits in a row, since a real rally alternates strikers. qwer
+   Keyboard input. a/s/l/; log a hit — the same player can't log
+   two hits in a row, since a real rally alternates strikers. qwer
    (near a, left hand) ends the point for A; uiop (near l, right
-   hand) ends it for B. t discards a let/replay without scoring
-   it. Ignored while typing into a text field, or with a modifier
-   held.
+   hand) ends it for B. f marks a serve fault, t discards a
+   let/replay without scoring it, b drops a visual-only ✕ into the
+   Rally track. Ignored while typing into a text field, or with a
+   modifier held.
    ============================================================ */
 const HIT_KEYS = { a: 0, s: 0, l: 1, ";": 1 };
 const OUTCOME_KEYS = { q:0, w:0, e:0, r:0, u:1, i:1, o:1, p:1 };
@@ -1496,11 +1531,14 @@ document.addEventListener("keydown", (e) => {
     finalizePoint(OUTCOME_KEYS[key]);
   } else if(key === "t"){
     e.preventDefault();
-    state.rally = []; state.rallyTimes = [];
+    state.rally = []; state.rallyTimes = []; state.rallyTokens = [];
     save(); render();
   } else if(key === "f"){
     e.preventDefault();
     addFault();
+  } else if(key === "b"){
+    e.preventDefault();
+    addCross();
   }
 });
 
