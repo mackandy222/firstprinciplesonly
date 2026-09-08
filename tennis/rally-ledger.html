@@ -160,6 +160,7 @@
   .predict-bar .seg-a{ background:var(--a); justify-content:flex-start; padding-left:8px; }
   .predict-bar .seg-b{ background:var(--b); justify-content:flex-end; padding-right:8px; }
   .predict-caption{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); }
+  .commentary-text{ font-size:13.5px; line-height:1.6; white-space:pre-wrap; }
 
   .setdist{ display:flex; flex-direction:column; gap:5px; margin-top:10px; }
   .setdist-row{ display:grid; grid-template-columns:44px 1fr 40px; align-items:center; gap:8px; }
@@ -247,6 +248,28 @@
   .kbd-hint{ display:block; margin-top:4px; }
   .kbd-hint kbd{ margin:0 2px; }
   .keyhint kbd{ margin:0 1px; }
+
+  .catchup-panel{
+    background:var(--surface); border:1px solid var(--court); border-radius:14px;
+    padding:14px 16px; display:flex; flex-direction:column; gap:10px;
+  }
+  .catchup-row{ display:grid; grid-template-columns:64px 1fr 1fr; align-items:center; gap:8px; }
+  .catchup-row.single{ grid-template-columns:64px 1fr; }
+  .catchup-row label{
+    font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim);
+    text-transform:uppercase; letter-spacing:.05em;
+  }
+  .catchup-row input[type="number"]{
+    width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink); font-family:'JetBrains Mono',monospace; font-size:15px; text-align:center;
+    font-variant-numeric:tabular-nums;
+  }
+  .catchup-check{
+    display:flex; align-items:center; gap:8px; font-family:'Public Sans',sans-serif;
+    font-size:13px; color:var(--ink-dim); cursor:pointer;
+  }
+  .catchup-actions{ display:flex; gap:10px; }
+  .catchup-actions button{ flex:1; }
 </style>
 
 <div class="wrap">
@@ -270,8 +293,12 @@
     </div>
     <div class="row" style="justify-content:space-between;">
       <div id="fmt-slot"></div>
-      <button class="btn-plain" id="newMatchTop">New match</button>
+      <div class="row" style="gap:6px;">
+        <button class="btn-plain" id="catchUpBtn">Enter score</button>
+        <button class="btn-plain" id="newMatchTop">New match</button>
+      </div>
     </div>
+    <div id="catchup-slot"></div>
 
     <div id="score-slot"></div>
     <div id="live-controls"></div>
@@ -279,6 +306,11 @@
     <div class="panel">
       <p class="section-label">Live win probability</p>
       <div id="predict-slot"></div>
+    </div>
+
+    <div class="panel">
+      <p class="section-label">Commentary</p>
+      <div id="commentary-slot"></div>
     </div>
 
     <div class="panel">
@@ -572,6 +604,121 @@ async function syncMatchToDb(){
 }
 
 /* ============================================================
+   sample capability — ask Claude to turn the recorded keystrokes
+   into written commentary. Entirely best-effort: every call is
+   guarded and the rest of the page works with or without it.
+   ============================================================ */
+let __samplePromise = null;
+function getSample(){
+  if(__samplePromise) return __samplePromise;
+  __samplePromise = (typeof window!=="undefined" && window.claude && window.claude.use)
+    ? window.claude.use("sample").catch(()=>null)
+    : Promise.resolve(null);
+  return __samplePromise;
+}
+
+let commentaryState = { loading:false, text:"", error:null, truncated:false };
+let __commentaryAbort = null;
+
+function buildCommentaryPrompt(){
+  const points = state.log.slice().reverse().slice(-300);
+  const lines = points.map((e,i) => {
+    const srv = e.server===0 ? state.nameA : state.nameB;
+    const tag = e.isPressure ? ` [${e.pressureType}]` : "";
+    const ev = e.events && e.events.length ? ` — ${e.events.join("; ")}` : "";
+    const gap = e.gapMs!=null ? ` (${(e.gapMs/1000).toFixed(0)}s since previous point)` : "";
+    return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}${gap}`;
+  }).join("\n");
+
+  const setsLine = state.score.setScores.length
+    ? state.score.setScores.map(([a,b])=>`${a}-${b}`).join(", ") + "; "
+    : "";
+  const scoreLine = `${state.nameA} vs ${state.nameB} — sets ${setsLine}current set ${state.score.games[0]}-${state.score.games[1]}`;
+  const statusLine = state.score.winner!=null
+    ? `${state.score.winner===0?state.nameA:state.nameB} has won the match.`
+    : "The match is still in progress.";
+
+  return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
+
+Each numbered line is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, any game/set/match event, and the seconds since the previous point (a rough pace/fatigue signal — rising gaps or slower rallies later on may indicate tiring, but only say so if the numbers actually show it).
+
+${scoreLine}
+${statusLine}
+
+Points:
+${lines}
+
+Write flowing match commentary in 3-5 short paragraphs, as if recapping the match for someone who wasn't there: the flow and momentum swings, how each player performed specifically on break/set/match points, and any fatigue pattern the pacing data genuinely supports. End with a one-line verdict on how the match stands or ended. Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list. No preamble or heading, just the commentary itself.`;
+}
+
+async function generateCommentary(){
+  if(commentaryState.loading) return;
+  if(!state.log.length){ commentaryState = { loading:false, text:"", error:"no-points", truncated:false }; renderCommentary(); return; }
+
+  const sample = await getSample();
+  if(!sample){ commentaryState = { loading:false, text:"", error:"unavailable", truncated:false }; renderCommentary(); return; }
+
+  commentaryState = { loading:true, text:"", error:null, truncated:false };
+  renderCommentary();
+
+  __commentaryAbort = new AbortController();
+  try{
+    const { text, truncated } = await sample(buildCommentaryPrompt(), {
+      signal: __commentaryAbort.signal,
+      modelTier: "default",
+      onText: ({text}) => { commentaryState.text = text; renderCommentary(); },
+    });
+    commentaryState = { loading:false, text, error:null, truncated };
+  }catch(e){
+    commentaryState = { loading:false, text: e && e.text || "", error: (e && e.code) || "upstream_error", truncated:false };
+  }
+  renderCommentary();
+}
+
+function renderCommentary(){
+  const slot = $("#commentary-slot");
+  if(!slot) return;
+  const c = commentaryState;
+
+  if(c.error==="no-points"){
+    slot.innerHTML = `<p class="predict-caption">Record a few points first — there's nothing to comment on yet.</p>`;
+    return;
+  }
+  if(c.error==="unavailable" || c.error==="not_granted" || c.error==="sampling_disabled" || c.error==="not_declared"){
+    slot.innerHTML = `<p class="predict-caption">Commentary asks Claude directly from the page, which isn't available in this view or for this account — the rest of Rally Ledger still works.</p>`;
+    return;
+  }
+  if(c.loading){
+    slot.innerHTML = `
+      <p class="commentary-text">${escapeHtml(c.text) || "Thinking…"}</p>
+      <button class="micro" id="stopCommentary" style="margin-top:6px;">stop</button>`;
+    return;
+  }
+  if(c.error==="cancelled"){
+    slot.innerHTML = `
+      ${c.text ? `<p class="commentary-text">${escapeHtml(c.text)}</p>` : ""}
+      <button class="micro" id="genCommentary" style="margin-top:6px;">generate</button>`;
+    return;
+  }
+  if(c.error){
+    slot.innerHTML = `
+      <p class="predict-caption">Couldn't generate commentary just now (${escapeHtml(c.error)}).</p>
+      <button class="micro" id="genCommentary" style="margin-top:4px;">try again</button>`;
+    return;
+  }
+  if(c.text){
+    slot.innerHTML = `
+      <p class="commentary-text">${escapeHtml(c.text)}</p>
+      ${c.truncated ? `<p class="predict-caption" style="margin-top:6px;">Cut short — generate again for a shorter recap.</p>` : ""}
+      <button class="micro" id="genCommentary" style="margin-top:8px;">regenerate</button>`;
+    return;
+  }
+  slot.innerHTML = `
+    <p class="predict-caption">Ask Claude to turn what you've recorded so far into a written recap.</p>
+    <button class="newmatch" id="genCommentary" style="margin-top:8px;">Generate commentary</button>`;
+}
+
+/* ============================================================
    App state
    ============================================================ */
 const STORE_KEY = "rally-ledger-v1";
@@ -604,6 +751,8 @@ function startFreshMatch(){
     matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
     gamesCompleted:0, setsCompleted:0,
   };
+  if(__commentaryAbort) __commentaryAbort.abort();
+  commentaryState = { loading:false, text:"", error:null, truncated:false };
 }
 
 function describeRally(hitters,winner,server){
@@ -629,6 +778,8 @@ if(state.lastPointMs === undefined) state.lastPointMs = null;
 if(state.dbCreated === undefined) state.dbCreated = false;
 if(state.gamesCompleted === undefined) state.gamesCompleted = 0;
 if(state.setsCompleted === undefined) state.setsCompleted = 0;
+
+let catchUpOpen = false;
 
 function load(){
   try{
@@ -657,16 +808,70 @@ function render(){
     ? `<div class="banner"><span>Showing demo data so you can see how it works.</span><button id="clearDemo">New match</button></div>`
     : "";
 
-  const locked = score.pointsPlayed>0 || score.sets[0]||score.sets[1];
+  const locked = score.pointsPlayed>0 || score.sets[0] || score.sets[1] || score.games[0] || score.games[1];
   $("#fmt-slot").innerHTML = locked
     ? `<span class="fmt-label">${fmt.label}</span>`
     : `<select id="fmtSelect">${Object.entries(FORMATS).map(([k,v])=>
         `<option value="${k}" ${k===fmtKey?"selected":""}>${v.label}</option>`).join("")}</select>`;
 
+  renderCatchup(nameA, nameB);
   renderScorecard(score, nameA, nameB);
   renderControls(score, nameA, nameB);
   renderPredict(score);
+  renderCommentary();
   renderLog(nameA, nameB);
+}
+
+function renderCatchup(nameA, nameB){
+  const slot = $("#catchup-slot");
+  if(!catchUpOpen){ slot.innerHTML = ""; return; }
+  slot.innerHTML = `
+    <div class="catchup-panel">
+      <p class="section-label">Enter current score</p>
+      <p class="predict-caption">
+        For when you're joining a match already in progress. This replaces whatever's
+        on screen now and starts fresh live tracking from this point — points played
+        before now won't be in the log, and past set scores won't show in the score line,
+        only the sets count.
+      </p>
+
+      <div class="catchup-row">
+        <label>Sets</label>
+        <input type="number" id="cuSetsA" min="0" max="5" value="0">
+        <input type="number" id="cuSetsB" min="0" max="5" value="0">
+      </div>
+      <div class="catchup-row">
+        <label>Games</label>
+        <input type="number" id="cuGamesA" min="0" max="30" value="0">
+        <input type="number" id="cuGamesB" min="0" max="30" value="0">
+      </div>
+      <div class="catchup-row">
+        <label>Points</label>
+        <input type="number" id="cuPtsA" min="0" max="30" value="0">
+        <input type="number" id="cuPtsB" min="0" max="30" value="0">
+      </div>
+      <p class="predict-caption" style="margin-top:-4px;">
+        Points: 0 = love, 1 = 15, 2 = 30, 3 = 40, 4 = advantage. In a tiebreak, just
+        enter the raw point count for each side.
+      </p>
+
+      <label class="catchup-check">
+        <input type="checkbox" id="cuTiebreak"> Currently in a tiebreak
+      </label>
+
+      <div class="catchup-row single">
+        <label>Serving</label>
+        <select id="cuServer">
+          <option value="0">${escapeHtml(nameA)}</option>
+          <option value="1">${escapeHtml(nameB)}</option>
+        </select>
+      </div>
+
+      <div class="catchup-actions">
+        <button class="btn-plain" id="cancelCatchup">Cancel</button>
+        <button class="newmatch" id="applyCatchup">Apply</button>
+      </div>
+    </div>`;
 }
 
 function renderScorecard(score, nameA, nameB){
@@ -885,6 +1090,38 @@ function removeLastSet(){
   if(entry) restoreFrom(entry);
 }
 
+function clampInt(v, lo, hi){
+  const n = parseInt(v, 10);
+  if(Number.isNaN(n)) return lo;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function applyCatchupFromForm(){
+  const setsA = clampInt($("#cuSetsA").value, 0, 10);
+  const setsB = clampInt($("#cuSetsB").value, 0, 10);
+  const gamesA = clampInt($("#cuGamesA").value, 0, 30);
+  const gamesB = clampInt($("#cuGamesB").value, 0, 30);
+  const ptsA = clampInt($("#cuPtsA").value, 0, 30);
+  const ptsB = clampInt($("#cuPtsB").value, 0, 30);
+  const inTb = $("#cuTiebreak").checked;
+  const server = Number($("#cuServer").value);
+  const fmt = FORMATS[state.fmtKey];
+
+  startFreshMatch();
+  state.score.sets = [setsA, setsB];
+  state.score.games = [gamesA, gamesB];
+  state.score.points = [ptsA, ptsB];
+  state.score.inTiebreak = inTb;
+  state.score.server = server;
+  state.score.setIndex = setsA + setsB;
+  if(inTb){ state.score.tbFirstServer = server; state.score.tbLeft = 1; }
+  if(Math.max(setsA, setsB) >= setsToWin(fmt)) state.score.winner = setsA > setsB ? 0 : 1;
+
+  catchUpOpen = false;
+  save(); render();
+  syncMatchToDb();
+}
+
 document.addEventListener("click", (e) => {
   const id = e.target.id;
   if(id==="hitA"){ addHit(0); }
@@ -896,9 +1133,15 @@ document.addEventListener("click", (e) => {
   else if(id==="removeLastGame"){ removeLastGame(); }
   else if(id==="removeLastSet"){ removeLastSet(); }
   else if(id==="newMatchTop" || id==="newMatchMain" || id==="clearDemo"){
+    catchUpOpen = false;
     startFreshMatch();
     save(); render();
   }
+  else if(id==="catchUpBtn"){ catchUpOpen = !catchUpOpen; renderCatchup(state.nameA, state.nameB); }
+  else if(id==="cancelCatchup"){ catchUpOpen = false; renderCatchup(state.nameA, state.nameB); }
+  else if(id==="applyCatchup"){ applyCatchupFromForm(); }
+  else if(id==="genCommentary"){ generateCommentary(); }
+  else if(id==="stopCommentary"){ if(__commentaryAbort) __commentaryAbort.abort(); }
   else if(id==="tabMatch"){ switchTab("match"); }
   else if(id==="tabPlayers"){ switchTab("players"); }
   else if(id==="refreshPlayers"){ loadMatches(); }
@@ -923,6 +1166,7 @@ function renderNamesDependent(){
   renderControls(state.score, state.nameA, state.nameB);
   renderPredict(state.score);
   renderLog(state.nameA, state.nameB);
+  renderCatchup(state.nameA, state.nameB);
 }
 
 /* ============================================================
