@@ -1124,6 +1124,13 @@ function escapeHtml(str){
 function addHit(side){
   if(state.rally.length && state.rally[state.rally.length-1]===side) return; // same player can't hit twice in a row
   if(state.isDemo) startFreshMatch();
+  if(state.rally.length===0 && side !== state.score.server){
+    // the server always strikes first — if the returner is tapped first,
+    // the serve happened too, it just wasn't tapped. Without this, a
+    // lone returner hit reads as a 1-hit point and gets mislabeled a
+    // double fault instead of a return winner/error.
+    state.rally.push(state.score.server); state.rallyTimes.push(Date.now());
+  }
   state.rally.push(side); state.rallyTimes.push(Date.now());
   save(); render();
 }
