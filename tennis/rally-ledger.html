@@ -744,9 +744,10 @@ function buildCommentaryPrompt(){
   const model = makeModel(rate(state.serverPts[0]), rate(state.serverPts[1]), FORMATS[state.fmtKey]);
   const pWinA = state.score.winner!=null ? (state.score.winner===0?1:0) : model.matchProb(state.score);
   const pctA = Math.round(pWinA*100), pctB = 100-pctA;
+  const oddsA = (1/pWinA).toFixed(2), oddsB = (1/(1-pWinA)).toFixed(2);
   const winProbLine = state.score.winner!=null
     ? ""
-    : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%.`;
+    : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%. Fair decimal odds implied by that probability (1/probability, no bookmaker margin — these are the app's own projection, not a real market line): ${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}.`;
 
   return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
 
@@ -763,7 +764,7 @@ ${patterns}
 Points:
 ${lines}
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${state.score.winner==null ? " End with a one-line read on who's likelier to win from here and why — ground it in the win-probability number above plus whichever Pattern best explains it, not a separate guess." : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${state.score.winner==null ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
 }
 
 async function generateCommentary(){
