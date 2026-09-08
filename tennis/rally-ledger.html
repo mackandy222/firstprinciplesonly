@@ -733,7 +733,9 @@ function buildCommentaryPrompt(){
     : state.score.pointsPlayed===0 && setsA+setsB>0
       ? " (Tracking picked up mid-match here, so the individual finished-set scores aren't known — only the sets tally above.)"
       : "";
-  const scoreLine = `${setsTally}${finishedSetsDetail} Current set game score: ${state.nameA} ${state.score.games[0]} – ${state.nameB} ${state.score.games[1]} games.`;
+  const [gamesA, gamesB] = state.score.games;
+  const gamesLeadNote = gamesA===gamesB ? " (level)" : ` (${gamesA>gamesB?state.nameA:state.nameB} leads this set)`;
+  const scoreLine = `${setsTally}${finishedSetsDetail} Current set game score: ${state.nameA} ${gamesA} – ${state.nameB} ${gamesB} games${gamesLeadNote}.`;
   const statusLine = state.score.winner!=null
     ? `${state.score.winner===0?state.nameA:state.nameB} has won the match.`
     : "The match is still in progress.";
