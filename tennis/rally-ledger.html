@@ -184,6 +184,16 @@
   .predict-caption{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); }
   .commentary-text{ font-size:13.5px; line-height:1.6; white-space:pre-wrap; }
 
+  .qa-pair{ margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
+  .qa-q{ font-family:'Public Sans',sans-serif; font-weight:700; font-size:12.5px; color:var(--ink); }
+  .qa-a{ font-size:12.5px; line-height:1.55; color:var(--ink-dim); margin-top:3px; white-space:pre-wrap; }
+  .followup-row{ display:flex; gap:6px; margin-top:8px; }
+  #followUpInput{
+    flex:1; min-width:0; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+    background:var(--surface-2); color:var(--ink); font-family:'Public Sans',sans-serif; font-size:13px;
+  }
+  #followUpInput:disabled{ opacity:.6; }
+
   .setdist{ display:flex; flex-direction:column; gap:5px; margin-top:10px; }
   .setdist-row{ display:grid; grid-template-columns:44px 1fr 40px; align-items:center; gap:8px; }
   .setdist-row span:first-child{ font-family:'JetBrains Mono',monospace; font-size:12px; }
@@ -340,6 +350,7 @@
     <div class="panel commentary-panel">
       <p class="section-label">Commentary</p>
       <div id="commentary-slot"></div>
+      <div id="followup-slot"></div>
     </div>
 
     <div class="panel">
@@ -715,7 +726,10 @@ function computePatterns(points, nameA, nameB){
   return parts.join("\n");
 }
 
-function buildCommentaryPrompt(){
+/* Shared match-grounding block for both commentary and the follow-up
+   Q&A box, so a follow-up answer is never working from different
+   data than what generated the commentary. */
+function buildMatchContext(){
   const points = state.log.slice().reverse().slice(-300);
   const lines = points.map((e,i) => {
     const srv = e.server===0 ? state.nameA : state.nameB;
@@ -753,9 +767,7 @@ function buildCommentaryPrompt(){
     ? ""
     : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%. Fair decimal odds implied by that probability (1/probability, no bookmaker margin — these are the app's own projection, not a real market line): ${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}.`;
 
-  return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
-
-Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. There is no reliable timing data — never mention gaps, pace, or how long anything took.
+  const body = `Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. There is no reliable timing data — never mention gaps, pace, or how long anything took.
 
 The scores are ground truth — state them exactly as given and never contradict yourself about who leads. "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
@@ -766,9 +778,32 @@ Patterns (use these as your evidence — don't recompute them, don't contradict 
 ${patterns}
 
 Points:
-${lines}
+${lines}`;
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${state.score.winner==null ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
+  return { body, oddsA, oddsB, decided: state.score.winner!=null };
+}
+
+function buildCommentaryPrompt(){
+  const ctx = buildMatchContext();
+  return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
+
+${ctx.body}
+
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
+}
+
+function buildFollowUpPrompt(question, history){
+  const ctx = buildMatchContext();
+  const historyText = (history && history.length)
+    ? `\nRecent follow-up Q&A, for context on what's already been asked:\n${history.slice(-3).map(h=>`Q: ${h.q}\nA: ${h.a}`).join("\n\n")}\n`
+    : "";
+  return `You are answering a follow-up question about a real tennis match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}), working ONLY from the point-by-point data below.
+
+${ctx.body}
+${historyText}
+Question: ${question}
+
+Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue (there's no reliable timing data). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
 }
 
 async function generateCommentary(){
@@ -785,7 +820,7 @@ async function generateCommentary(){
   try{
     const { text, truncated } = await sample(buildCommentaryPrompt(), {
       signal: __commentaryAbort.signal,
-      modelTier: "default",
+      modelTier: "complex",
       onText: ({text}) => { commentaryState.text = text; renderCommentary(); },
     });
     commentaryState = { loading:false, text, error:null, truncated };
@@ -839,6 +874,79 @@ function renderCommentary(){
 }
 
 /* ============================================================
+   Follow-up Q&A — same match-grounding as commentary, so answers
+   stay consistent with it. Deliberately NOT wired into the main
+   render() cycle: it's only re-rendered by its own actions (ask,
+   streaming, new match), so an unrelated point/tap never resets a
+   question mid-type.
+   ============================================================ */
+let followUpState = { history: [], draft: "", loading: false, error: null, pendingQ: null, pendingA: "" };
+let __followUpAbort = null;
+
+async function askFollowUp(){
+  if(followUpState.loading) return;
+  const input = $("#followUpInput");
+  const question = ((input ? input.value : followUpState.draft) || "").trim();
+  if(!question) return;
+  if(!state.log.length){ followUpState.error = "no-points"; renderFollowUp(); return; }
+
+  const sample = await getSample();
+  if(!sample){ followUpState.error = "unavailable"; renderFollowUp(); return; }
+
+  followUpState.loading = true; followUpState.error = null;
+  followUpState.pendingQ = question; followUpState.pendingA = ""; followUpState.draft = "";
+  renderFollowUp();
+
+  __followUpAbort = new AbortController();
+  try{
+    const { text } = await sample(buildFollowUpPrompt(question, followUpState.history), {
+      signal: __followUpAbort.signal,
+      modelTier: "complex",
+      onText: ({text}) => { followUpState.pendingA = text; renderFollowUp(); },
+    });
+    followUpState.history.push({ q: question, a: text });
+    followUpState.loading = false; followUpState.pendingQ = null; followUpState.pendingA = "";
+  }catch(e){
+    followUpState.loading = false;
+    followUpState.error = (e && e.code) || "upstream_error";
+  }
+  renderFollowUp();
+}
+
+function renderFollowUp(){
+  const slot = $("#followup-slot");
+  if(!slot) return;
+  const f = followUpState;
+
+  const historyHtml = f.history.map(h => `
+    <div class="qa-pair">
+      <p class="qa-q">${escapeHtml(h.q)}</p>
+      <p class="qa-a">${escapeHtml(h.a)}</p>
+    </div>`).join("");
+
+  const pendingHtml = f.loading ? `
+    <div class="qa-pair">
+      <p class="qa-q">${escapeHtml(f.pendingQ || "")}</p>
+      <p class="qa-a">${escapeHtml(f.pendingA) || "Thinking…"}</p>
+    </div>` : "";
+
+  let errorHtml = "";
+  if(f.error==="no-points") errorHtml = `<p class="predict-caption">Record a few points first — there's nothing to ask about yet.</p>`;
+  else if(f.error==="unavailable" || f.error==="not_granted" || f.error==="sampling_disabled" || f.error==="not_declared")
+    errorHtml = `<p class="predict-caption">Follow-up questions aren't available in this view or for this account.</p>`;
+  else if(f.error) errorHtml = `<p class="predict-caption">Couldn't get an answer just now (${escapeHtml(f.error)}).</p>`;
+
+  slot.innerHTML = `
+    <p class="section-label" style="margin-top:14px;">Ask a follow-up</p>
+    ${historyHtml}${pendingHtml}${errorHtml}
+    <div class="followup-row">
+      <input type="text" id="followUpInput" placeholder="e.g. why is the momentum shifting?"
+        value="${escapeHtml(f.draft)}" ${f.loading?"disabled":""}>
+      <button class="micro" id="askFollowUpBtn" ${f.loading?"disabled":""}>${f.loading?"…":"Ask"}</button>
+    </div>`;
+}
+
+/* ============================================================
    App state
    ============================================================ */
 const STORE_KEY = "rally-ledger-v1";
@@ -873,6 +981,9 @@ function startFreshMatch(){
   };
   if(__commentaryAbort) __commentaryAbort.abort();
   commentaryState = { loading:false, text:"", error:null, truncated:false };
+  if(__followUpAbort) __followUpAbort.abort();
+  followUpState = { history:[], draft:"", loading:false, error:null, pendingQ:null, pendingA:"" };
+  renderFollowUp();
 }
 
 function describeRally(hitters,winner,server,serveNumber){
@@ -1297,6 +1408,7 @@ document.addEventListener("click", (e) => {
   else if(id==="applyCatchup"){ applyCatchupFromForm(); }
   else if(id==="genCommentary"){ generateCommentary(); }
   else if(id==="stopCommentary"){ if(__commentaryAbort) __commentaryAbort.abort(); }
+  else if(id==="askFollowUpBtn"){ askFollowUp(); }
   else if(id==="tabMatch"){ switchTab("match"); }
   else if(id==="tabPlayers"){ switchTab("players"); }
   else if(id==="refreshPlayers"){ loadMatches(); }
@@ -1355,6 +1467,13 @@ document.addEventListener("keydown", (e) => {
   } else if(key === "f"){
     e.preventDefault();
     addFault();
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if(e.target && e.target.id==="followUpInput" && e.key==="Enter"){
+    e.preventDefault();
+    askFollowUp();
   }
 });
 
@@ -1560,4 +1679,5 @@ function renderProfileHtml(name, matches){
 }
 
 render();
+renderFollowUp();
 </script>
