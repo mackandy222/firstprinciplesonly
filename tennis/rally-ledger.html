@@ -394,11 +394,15 @@
    (ported 1:1 from tennis/scoring.py; verified against it)
    ============================================================ */
 const FORMATS = {
-  bo3:      { label:"Best of 3",              bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
-  bo3super: { label:"Best of 3 + super TB",    bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"super_set",advCap:25 },
-  bo5:      { label:"Best of 5",               bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
-  bo5tb10:  { label:"Best of 5, TB-10 decider",bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb10",     advCap:25 },
-  bo5adv:   { label:"Best of 5, advantage set",bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"advantage",advCap:25 },
+  // Since 2022 every Grand Slam — US Open included — plays a 10-point
+  // tiebreak in the DECIDING set at 6-6; ordinary sets stay at 7. The
+  // slam formats below are therefore the tb10 ones, not tb7.
+  bo5:      { label:"Best of 5 — Slam (10-pt decider)", bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb10",     advCap:25 },
+  bo3slam:  { label:"Best of 3 — Slam (10-pt decider)", bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb10",     advCap:25 },
+  bo3:      { label:"Best of 3 — tour (7-pt decider)",  bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
+  bo3super: { label:"Best of 3 + 10-pt match tiebreak", bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"super_set",advCap:25 },
+  bo5tb7:   { label:"Best of 5 (7-pt decider)",         bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
+  bo5adv:   { label:"Best of 5 — advantage final set",  bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"advantage",advCap:25 },
 };
 function setsToWin(fmt){ return Math.floor(fmt.bestOf/2)+1; }
 function isFinalSet(fmt,i){ return i===fmt.bestOf-1; }
@@ -1043,6 +1047,12 @@ function scoreLineShort(s){
 }
 
 let state = load() || demoState();
+// A saved match may carry a format key from before the slam formats were
+// corrected to a 10-point decider; map it forward and never leave an
+// unknown key, since every FORMATS[state.fmtKey] lookup assumes it resolves.
+const LEGACY_FMT_KEYS = { bo5tb10: "bo5" };
+if(LEGACY_FMT_KEYS[state.fmtKey]) state.fmtKey = LEGACY_FMT_KEYS[state.fmtKey];
+if(!FORMATS[state.fmtKey]) state.fmtKey = "bo3";
 state.rally = state.rally || [];
 state.rallyTimes = state.rallyTimes || [];
 state.rallyTokens = state.rallyTokens || [];
