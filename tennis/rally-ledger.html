@@ -289,12 +289,10 @@
       so on — the description is derived, never typed. Break/set/match points
       are tagged automatically and feed the Players tab's fatigue and clutch
       breakdowns.<br><br>
-      On a keyboard: <kbd>A</kbd> / <kbd>L</kbd> log a hit, and any key
-      <b>above</b> a player's hit key (<kbd>Q</kbd><kbd>W</kbd> / <kbd>O</kbd><kbd>P</kbd>)
-      means they won the point, any key <b>below</b> it
-      (<kbd>Z</kbd><kbd>X</kbd> / <kbd>,</kbd><kbd>.</kbd><kbd>/</kbd>) means they lost —
-      whichever hand is free ends the point. <kbd>T</kbd> discards a let/replay
-      without scoring it.
+      On a keyboard: <kbd>A</kbd> / <kbd>L</kbd> log a hit (the same player can't
+      hit twice in a row — a rally always alternates). <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd>
+      ends the point for the left-hand player, <kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd>
+      ends it for the right-hand player. <kbd>T</kbd> discards a let/replay without scoring it.
     </p>
   </div>
 
@@ -711,8 +709,8 @@ function renderControls(score, nameA, nameB){
       <button class="tap b" id="hitB">HIT<small>${escapeHtml(nameB)}</small><kbd>L</kbd></button>
     </div>
     <div class="outgrid" style="margin-top:10px;">
-      <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}<span class="kbd-hint"><kbd>Q</kbd><kbd>W</kbd><kbd>,</kbd><kbd>.</kbd><kbd>/</kbd></span></button>
-      <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}<span class="kbd-hint"><kbd>Z</kbd><kbd>X</kbd><kbd>O</kbd><kbd>P</kbd></span></button>
+      <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}<span class="kbd-hint"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></span></button>
+      <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}<span class="kbd-hint"><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></span></button>
     </div>
     <div class="microrow" style="margin-top:8px;">
       <button class="micro" id="undoTap" ${rally.length?"":"disabled"}>undo tap</button>
@@ -774,6 +772,13 @@ function escapeHtml(str){
 /* ============================================================
    Actions
    ============================================================ */
+function addHit(side){
+  if(state.rally.length && state.rally[state.rally.length-1]===side) return; // same player can't hit twice in a row
+  if(state.isDemo) startFreshMatch();
+  state.rally.push(side); state.rallyTimes.push(Date.now());
+  save(); render();
+}
+
 function finalizePoint(winner){
   if(state.isDemo) startFreshMatch();
   const fmt = FORMATS[state.fmtKey];
@@ -810,8 +815,8 @@ function finalizePoint(winner){
 
 document.addEventListener("click", (e) => {
   const id = e.target.id;
-  if(id==="hitA"){ if(state.isDemo) startFreshMatch(); state.rally.push(0); state.rallyTimes.push(Date.now()); save(); render(); }
-  else if(id==="hitB"){ if(state.isDemo) startFreshMatch(); state.rally.push(1); state.rallyTimes.push(Date.now()); save(); render(); }
+  if(id==="hitA"){ addHit(0); }
+  else if(id==="hitB"){ addHit(1); }
   else if(id==="winA"){ finalizePoint(0); }
   else if(id==="winB"){ finalizePoint(1); }
   else if(id==="undoTap"){ state.rally.pop(); state.rallyTimes.pop(); save(); render(); }
@@ -853,15 +858,15 @@ function renderNamesDependent(){
 }
 
 /* ============================================================
-   Keyboard input — the two-hand scheme from tennis/keys.py.
-   a/l log a hit; a key above a player's hit key means they won
-   the point, a key below means they lost it (so the same event
-   reaches the score two ways — whichever hand is free ends the
-   point). t discards a let/replay without scoring it. Ignored
-   while typing into a text field, or with a modifier held.
+   Keyboard input. a/l log a hit — the same player can't log two
+   hits in a row, since a real rally alternates strikers. qwer
+   (near a, left hand) ends the point for A; uiop (near l, right
+   hand) ends it for B. t discards a let/replay without scoring
+   it. Ignored while typing into a text field, or with a modifier
+   held.
    ============================================================ */
 const HIT_KEYS = { a: 0, l: 1 };
-const OUTCOME_KEYS = { q:0, w:0, z:1, x:1, o:1, p:1, ",":0, ".":0, "/":0 };
+const OUTCOME_KEYS = { q:0, w:0, e:0, r:0, u:1, i:1, o:1, p:1 };
 
 document.addEventListener("keydown", (e) => {
   if(currentTab !== "match" || state.score.winner !== null) return;
@@ -872,9 +877,7 @@ document.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   if(key in HIT_KEYS){
     e.preventDefault();
-    if(state.isDemo) startFreshMatch();
-    state.rally.push(HIT_KEYS[key]); state.rallyTimes.push(Date.now());
-    save(); render();
+    addHit(HIT_KEYS[key]);
   } else if(key in OUTCOME_KEYS){
     e.preventDefault();
     finalizePoint(OUTCOME_KEYS[key]);
