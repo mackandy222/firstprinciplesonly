@@ -647,6 +647,11 @@ async function syncMatchToDbNow(){
       winner: state.score.winner,
       setsA: state.score.sets[0], setsB: state.score.sets[1],
       finalSets: state.score.sets,
+      // Full live state, not just the sets tally, so a reported bug can
+      // be verified against ground truth later instead of guessed at.
+      liveGames: state.score.games, livePoints: state.score.points,
+      liveInTiebreak: state.score.inTiebreak, liveServer: state.score.server,
+      liveSetScores: state.score.setScores,
       points: state.log.slice().reverse().map(e => ({
         server: e.server, winner: e.winner, n: e.hitters ? e.hitters.length : 1,
         pressure: !!e.isPressure, pressureType: e.pressureType || null,
@@ -742,11 +747,25 @@ function buildMatchContext(){
   const [setsA, setsB] = state.score.sets;
   const setsTally = `Sets: ${state.nameA} ${setsA} – ${state.nameB} ${setsB}` +
     (setsA===setsB ? " (level)." : ` (${setsA>setsB?state.nameA:state.nameB} leads).`);
-  const finishedSetsDetail = state.score.setScores.length
-    ? ` Finished set scores so far, in order: ${state.score.setScores.map(([a,b])=>`${a}-${b}`).join(", ")}.`
-    : state.score.pointsPlayed===0 && setsA+setsB>0
-      ? " (Tracking picked up mid-match here, so the individual finished-set scores aren't known — only the sets tally above.)"
-      : "";
+  // setScores only ever holds sets completed since tracking began — if
+  // catch-up seeded some sets before that, there are more finished sets
+  // than known detail, and that gap has to be stated explicitly or the
+  // model will invent a plausible-looking score to fill it (confirmed:
+  // that's what produced a fabricated "7-5" for an unknown set).
+  const totalCompletedSets = setsA + setsB;
+  const knownSets = state.score.setScores.length;
+  const knownSetsStr = () => state.score.setScores.map(([a,b])=>`${a}-${b}`).join(", ");
+  let finishedSetsDetail;
+  if(knownSets === 0 && totalCompletedSets > 0){
+    finishedSetsDetail = ` Tracking picked up mid-match, so NONE of the ${totalCompletedSets} finished set${totalCompletedSets===1?"":"s"} has a known score — only the sets tally above. Never state a score for any finished set.`;
+  } else if(knownSets > 0 && knownSets < totalCompletedSets){
+    const unknownCount = totalCompletedSets - knownSets;
+    finishedSetsDetail = ` Scores for only the last ${knownSets} finished set${knownSets===1?"":"s"} (in order): ${knownSetsStr()}. The other ${unknownCount} finished set${unknownCount===1?"":"s"}, played before tracking started, ${unknownCount===1?"has":"have"} NO known score — never state one.`;
+  } else if(knownSets > 0){
+    finishedSetsDetail = ` Finished set scores so far, in order: ${knownSetsStr()}.`;
+  } else {
+    finishedSetsDetail = "";
+  }
   const [gamesA, gamesB] = state.score.games;
   const gamesLeadNote = gamesA===gamesB ? " (level)" : ` (${gamesA>gamesB?state.nameA:state.nameB} leads this set)`;
 
@@ -804,7 +823,7 @@ function buildCommentaryPrompt(){
 
 ${ctx.body}
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
 }
 
 function buildFollowUpPrompt(question, history){
@@ -818,7 +837,7 @@ ${ctx.body}
 ${historyText}
 Question: ${question}
 
-Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue (there's no reliable timing data). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
+Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, timing, or fatigue (there's no reliable timing data). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
 }
 
 async function generateCommentary(){
