@@ -1,0 +1,1039 @@
+<title>Rally Ledger</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f4f6f0; --surface:#ffffff; --surface-2:#eef1e7;
+    --ink:#152420; --ink-dim:#5c6b62; --line:#dbe1d3;
+    --court:#1f6f5c; --court-dim:#e5f0eb;
+    --ball:#c7d92e; --ball-ink:#242600;
+    --a:#1f6f5c; --a-dim:#e5f0eb;
+    --b:#bd4a1e; --b-dim:#fbe9e0;
+    --shadow: 0 8px 24px -12px rgba(20,36,30,.35);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d1815; --surface:#12211d; --surface-2:#182b25;
+      --ink:#e9f2ec; --ink-dim:#9db3a8; --line:#233a32;
+      --court:#4fbd9d; --court-dim:#14302a;
+      --ball:#d7e94a; --ball-ink:#1a1d05;
+      --a:#4fbd9d; --a-dim:#12302a;
+      --b:#e78352; --b-dim:#33190d;
+      --shadow: 0 10px 28px -12px rgba(0,0,0,.55);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1815; --surface:#12211d; --surface-2:#182b25;
+    --ink:#e9f2ec; --ink-dim:#9db3a8; --line:#233a32;
+    --court:#4fbd9d; --court-dim:#14302a;
+    --ball:#d7e94a; --ball-ink:#1a1d05;
+    --a:#4fbd9d; --a-dim:#12302a;
+    --b:#e78352; --b-dim:#33190d;
+    --shadow: 0 10px 28px -12px rgba(0,0,0,.55);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Public Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .wrap{ max-width:480px; margin:0 auto; padding:16px 16px 48px; display:flex; flex-direction:column; gap:14px; }
+
+  h1{ text-wrap:balance; }
+  .eyebrow{
+    font-family:'JetBrains Mono',ui-monospace,monospace; font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-dim); margin:2px 0 0;
+  }
+  .title{
+    font-family:'Big Shoulders Display','Arial Narrow',sans-serif; font-weight:900;
+    font-size:30px; line-height:1; margin:2px 0 0; letter-spacing:.01em;
+  }
+
+  .names{ display:flex; align-items:center; gap:10px; }
+  .name-input{
+    flex:1; min-width:0; font-family:'Big Shoulders Display',sans-serif; font-weight:800;
+    font-size:20px; background:transparent; border:none; border-bottom:2px solid var(--line);
+    padding:4px 2px; color:var(--ink); outline:none;
+  }
+  .name-input.side-a{ border-bottom-color:var(--a); color:var(--a); text-align:left; }
+  .name-input.side-b{ border-bottom-color:var(--b); color:var(--b); text-align:right; }
+  .name-input:focus{ border-bottom-width:3px; }
+  .vs{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim); flex:0 0 auto; }
+
+  .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  select, .btn-plain{
+    font-family:'Public Sans',sans-serif; font-size:13px; font-weight:600; color:var(--ink-dim);
+    background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+  }
+  .btn-plain{ cursor:pointer; color:var(--ink); }
+  .btn-plain:hover{ border-color:var(--court); }
+  .fmt-label{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim); }
+
+  .banner{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    background:var(--ball); color:var(--ball-ink); border-radius:10px; padding:9px 12px;
+    font-size:13px; font-weight:600;
+  }
+  .banner button{
+    background:transparent; border:1px solid var(--ball-ink); color:var(--ball-ink);
+    border-radius:6px; padding:4px 9px; font-size:12px; font-weight:700; cursor:pointer;
+  }
+
+  .scorecard{
+    background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:18px 16px 16px; box-shadow:var(--shadow); position:relative; overflow:hidden;
+  }
+  .scorecard::before{
+    content:""; position:absolute; inset:0 0 auto 0; height:5px; background:var(--court);
+  }
+  .setline{
+    font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim);
+    display:flex; justify-content:center; gap:14px; margin-bottom:10px;
+    font-variant-numeric:tabular-nums;
+  }
+  .setline b{ color:var(--ink); font-weight:600; }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--line); display:inline-block; }
+  .dot.on-a{ background:var(--a); } .dot.on-b{ background:var(--b); }
+
+  .points{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; }
+  .points .num{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:900; font-size:68px; line-height:.9;
+    font-variant-numeric:tabular-nums; text-align:center;
+  }
+  .points .num.a{ color:var(--a); } .points .num.b{ color:var(--b); }
+  .points .sep{ font-family:'Big Shoulders Display',sans-serif; font-size:32px; color:var(--ink-dim); font-weight:700; }
+  .serve-tag{
+    font-family:'JetBrains Mono',monospace; font-size:11px; text-align:center; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-dim); margin-top:2px;
+  }
+  .serve-tag .dot{ width:6px; height:6px; margin-right:4px; }
+
+  .section-label{
+    font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-dim); margin:0;
+  }
+
+  .rally-track{ display:flex; align-items:center; gap:8px; min-height:20px; }
+  .rally-empty{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim); font-style:italic; }
+  .rdot{ width:13px; height:13px; border-radius:50%; }
+  .rdot.a{ background:var(--a); } .rdot.b{ background:var(--b); }
+
+  .tapgrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tap{
+    border:none; border-radius:14px; padding:20px 10px; font-family:'Big Shoulders Display',sans-serif;
+    font-weight:800; font-size:18px; letter-spacing:.02em; cursor:pointer; color:#fff;
+    display:flex; flex-direction:column; align-items:center; gap:4px; transition:transform .08s ease;
+  }
+  .tap:active{ transform:scale(.97); }
+  .tap.a{ background:var(--a); } .tap.b{ background:var(--b); }
+  .tap small{ font-family:'Public Sans',sans-serif; font-size:10px; font-weight:600; opacity:.85; text-transform:uppercase; letter-spacing:.08em; }
+
+  .outgrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .outbtn{
+    border-radius:14px; padding:14px 8px; font-family:'Public Sans',sans-serif; font-weight:700; font-size:14px;
+    cursor:pointer; background:var(--surface); border:2px solid;
+  }
+  .outbtn.a{ border-color:var(--a); color:var(--a); } .outbtn.b{ border-color:var(--b); color:var(--b); }
+  .outbtn:active{ transform:scale(.98); }
+
+  .microrow{ display:flex; justify-content:space-between; gap:8px; }
+  .micro{
+    background:none; border:none; color:var(--ink-dim); font-family:'JetBrains Mono',monospace;
+    font-size:11px; text-decoration:underline; cursor:pointer; padding:4px 0;
+  }
+  .micro:disabled{ opacity:.35; text-decoration:none; cursor:default; }
+
+  .panel{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px 16px;
+  }
+  .predict-bar{
+    display:flex; height:26px; border-radius:7px; overflow:hidden; margin:8px 0 4px; border:1px solid var(--line);
+  }
+  .predict-bar div{ display:flex; align-items:center; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; color:#fff; }
+  .predict-bar .seg-a{ background:var(--a); justify-content:flex-start; padding-left:8px; }
+  .predict-bar .seg-b{ background:var(--b); justify-content:flex-end; padding-right:8px; }
+  .predict-caption{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); }
+
+  .setdist{ display:flex; flex-direction:column; gap:5px; margin-top:10px; }
+  .setdist-row{ display:grid; grid-template-columns:44px 1fr 40px; align-items:center; gap:8px; }
+  .setdist-row span:first-child{ font-family:'JetBrains Mono',monospace; font-size:12px; }
+  .setdist-track{ background:var(--surface-2); border-radius:5px; height:8px; overflow:hidden; }
+  .setdist-fill{ background:var(--court); height:100%; border-radius:5px; }
+  .setdist-row span:last-child{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); text-align:right; font-variant-numeric:tabular-nums; }
+
+  .log-header{ display:flex; justify-content:space-between; align-items:baseline; }
+  .log{ display:flex; flex-direction:column; gap:0; margin-top:6px; }
+  .log-row{
+    display:grid; grid-template-columns:8px 1fr auto; gap:10px; align-items:center;
+    padding:8px 0; border-top:1px solid var(--line);
+  }
+  .log-row:first-child{ border-top:none; }
+  .log-dot{ width:8px; height:8px; border-radius:50%; }
+  .log-desc{ font-size:12.5px; color:var(--ink); }
+  .log-desc small{ display:block; color:var(--ink-dim); font-family:'JetBrains Mono',monospace; font-size:10.5px; margin-top:1px; }
+  .log-score{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .log-empty{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim); padding:8px 0; }
+
+  .match-banner{
+    background:var(--court); color:#fff; border-radius:14px; padding:18px; text-align:center;
+    font-family:'Big Shoulders Display',sans-serif; font-weight:900; font-size:26px; box-shadow:var(--shadow);
+  }
+  .match-banner div{ font-family:'Public Sans',sans-serif; font-weight:600; font-size:12px; opacity:.85; margin-top:4px; text-transform:uppercase; letter-spacing:.08em; }
+
+  .newmatch{
+    width:100%; padding:13px; border-radius:12px; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink); font-family:'Public Sans',sans-serif; font-weight:700; font-size:13px; cursor:pointer;
+  }
+  .newmatch:hover{ border-color:var(--court); }
+
+  .keyhint{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); line-height:1.6; }
+  .keyhint b{ color:var(--ink); }
+
+  .tabs{ display:flex; gap:6px; background:var(--surface-2); border:1px solid var(--line); border-radius:11px; padding:4px; }
+  .tab-btn{
+    flex:1; padding:9px 6px; border:none; border-radius:8px; background:transparent; cursor:pointer;
+    font-family:'Public Sans',sans-serif; font-weight:700; font-size:13px; color:var(--ink-dim);
+  }
+  .tab-btn.active{ background:var(--surface); color:var(--court); box-shadow:0 1px 4px rgba(0,0,0,.08); }
+
+  .player-row{
+    width:100%; display:flex; justify-content:space-between; align-items:center; text-align:left;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 13px;
+    margin-top:8px; cursor:pointer; font-family:'Public Sans',sans-serif; font-weight:700; font-size:14px; color:var(--ink);
+  }
+  .player-row:first-child{ margin-top:0; }
+  .player-row:hover{ border-color:var(--court); }
+  .backlink{ padding:0; font-weight:700; }
+
+  .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat-tile{
+    background:var(--surface-2); border:1px solid var(--line); border-radius:12px; padding:12px;
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .stat-num{ font-family:'Big Shoulders Display',sans-serif; font-weight:900; font-size:30px; line-height:1; color:var(--court); font-variant-numeric:tabular-nums; }
+  .stat-label{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em; }
+
+  .clutch-badge{
+    font-family:'JetBrains Mono',monospace; font-weight:700; font-size:12px; padding:2px 7px; border-radius:6px; margin-right:4px;
+  }
+  .clutch-badge.up{ background:var(--a-dim); color:var(--a); }
+  .clutch-badge.down{ background:var(--b-dim); color:var(--b); }
+
+  .trend-row{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; align-items:end; }
+  .trend-col{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .trend-bar-track{ width:100%; height:64px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px; display:flex; align-items:flex-end; overflow:hidden; }
+  .trend-bar-fill{ width:100%; background:var(--court); border-radius:0; }
+  .trend-pct{ font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:var(--ink); }
+
+  .chip{
+    display:inline-block; margin-left:6px; padding:1px 6px; border-radius:5px; background:var(--ball); color:var(--ball-ink);
+    font-family:'JetBrains Mono',monospace; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    vertical-align:1px;
+  }
+</style>
+
+<div class="wrap">
+  <div>
+    <p class="eyebrow">First-principles scoring</p>
+    <h1 class="title">Rally Ledger</h1>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" id="tabMatch">Match</button>
+    <button class="tab-btn" id="tabPlayers">Players</button>
+  </div>
+
+  <div id="view-match">
+    <div id="banner-slot"></div>
+
+    <div class="names">
+      <input id="nameA" class="name-input side-a" maxlength="14" />
+      <span class="vs">v</span>
+      <input id="nameB" class="name-input side-b" maxlength="14" />
+    </div>
+    <div class="row" style="justify-content:space-between;">
+      <div id="fmt-slot"></div>
+      <button class="btn-plain" id="newMatchTop">New match</button>
+    </div>
+
+    <div id="score-slot"></div>
+    <div id="live-controls"></div>
+
+    <div class="panel">
+      <p class="section-label">Live win probability</p>
+      <div id="predict-slot"></div>
+    </div>
+
+    <div class="panel">
+      <div class="log-header">
+        <p class="section-label">Points</p>
+        <span class="predict-caption" id="log-count"></span>
+      </div>
+      <div id="log-slot"></div>
+    </div>
+
+    <p class="keyhint">
+      Tap <b>HIT</b> once per shot as the rally happens (optional — you can skip
+      straight to the outcome), then tap <b>Point →</b> for whoever won it.
+      A 1-hit point is an ace/double fault, 2 hits is a return winner/error, and
+      so on — the description is derived, never typed. Break/set/match points
+      are tagged automatically and feed the Players tab's fatigue and clutch
+      breakdowns.
+    </p>
+  </div>
+
+  <div id="view-players" hidden></div>
+</div>
+
+<script>
+/* ============================================================
+   Core scoring + probability engine
+   (ported 1:1 from tennis/scoring.py; verified against it)
+   ============================================================ */
+const FORMATS = {
+  bo3:      { label:"Best of 3",              bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
+  bo3super: { label:"Best of 3 + super TB",    bestOf:3, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"super_set",advCap:25 },
+  bo5:      { label:"Best of 5",               bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb7",      advCap:25 },
+  bo5tb10:  { label:"Best of 5, TB-10 decider",bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"tb10",     advCap:25 },
+  bo5adv:   { label:"Best of 5, advantage set",bestOf:5, setGames:6, tiebreakAt:6, tiebreakPoints:7, finalSet:"advantage",advCap:25 },
+};
+function setsToWin(fmt){ return Math.floor(fmt.bestOf/2)+1; }
+function isFinalSet(fmt,i){ return i===fmt.bestOf-1; }
+function tbPointsForSet(fmt,i){
+  if(isFinalSet(fmt,i)){
+    if(fmt.finalSet==="tb10"||fmt.finalSet==="super_set") return 10;
+    if(fmt.finalSet==="advantage") return null;
+  }
+  return fmt.tiebreakPoints;
+}
+function isSuperSet(fmt,i){ return fmt.finalSet==="super_set" && isFinalSet(fmt,i); }
+
+function newScore(server=0){
+  return { sets:[0,0], games:[0,0], points:[0,0], server, inTiebreak:false, tbLeft:1,
+           tbFirstServer:0, setIndex:0, winner:null, setScores:[], pointsPlayed:0 };
+}
+function cloneScore(s){
+  return { ...s, sets:[...s.sets], games:[...s.games], points:[...s.points],
+           setScores:s.setScores.map(x=>[...x]) };
+}
+function decided(pts,target,margin){ return Math.max(pts[0],pts[1])>=target && Math.abs(pts[0]-pts[1])>=margin; }
+
+function awardPoint(s,winner,fmt){
+  if(s.winner!==null) return [];
+  const events=[];
+  s.points[winner]+=1; s.pointsPlayed+=1;
+  if(s.inTiebreak){
+    const target=tbPointsForSet(fmt,s.setIndex)||fmt.tiebreakPoints;
+    if(s.tbLeft>1) s.tbLeft-=1; else { s.server=1-s.server; s.tbLeft=2; }
+    if(decided(s.points,target,2)){
+      const w=s.points[0]>s.points[1]?0:1;
+      events.push(`tiebreak ${s.points[0]}-${s.points[1]}`);
+      s.games[w]+=1;
+      closeSet(s,w,fmt,events,true);
+    }
+    return events;
+  }
+  if(decided(s.points,4,2)){
+    const w=s.points[0]>s.points[1]?0:1;
+    s.games[w]+=1; s.points=[0,0];
+    const held=w===s.server;
+    events.push(`${held?"game":"BREAK"} ${w===0?"A":"B"} (${s.games[0]}-${s.games[1]})`);
+    s.server=1-s.server;
+    checkSetEnd(s,fmt,events);
+  }
+  return events;
+}
+function checkSetEnd(s,fmt,events){
+  const [ga,gb]=s.games; const tbPts=tbPointsForSet(fmt,s.setIndex);
+  if(Math.max(ga,gb)>=fmt.setGames && Math.abs(ga-gb)>=2) closeSet(s,ga>gb?0:1,fmt,events);
+  else if(tbPts!==null && ga===fmt.tiebreakAt && gb===fmt.tiebreakAt) startTiebreak(s,tbPts,events);
+  else if(tbPts===null && Math.max(ga,gb)>=fmt.advCap) closeSet(s,ga>gb?0:1,fmt,events);
+}
+function startTiebreak(s,target,events){
+  s.inTiebreak=true; s.tbLeft=1; s.tbFirstServer=s.server; s.points=[0,0];
+  events.push(`tiebreak to ${target}`);
+}
+function closeSet(s,w,fmt,events,afterTb=false){
+  s.sets[w]+=1; s.setScores.push([s.games[0],s.games[1]]);
+  events.push(`SET ${w===0?"A":"B"} ${s.games[0]}-${s.games[1]}`);
+  if(afterTb) s.server=1-s.tbFirstServer;
+  s.inTiebreak=false; s.tbLeft=1; s.games=[0,0]; s.points=[0,0]; s.setIndex+=1;
+  if(s.sets[w]>=setsToWin(fmt)){ s.winner=w; events.push("MATCH"); }
+  else if(isSuperSet(fmt,s.setIndex)) startTiebreak(s,10,events);
+}
+const POINT_LABELS={0:"0",1:"15",2:"30",3:"40"};
+function pointParts(s){
+  const [a,b]=s.points;
+  if(s.inTiebreak) return [String(a),String(b)];
+  if(a>=3&&b>=3){ if(a===b) return ["40","40"]; return a>b?["AD","40"]:["40","AD"]; }
+  return [POINT_LABELS[a]??"40", POINT_LABELS[b]??"40"];
+}
+
+function gameWinProb(p,sp=0,rp=0){
+  if(sp>=4 && sp-rp>=2) return 1.0;
+  if(rp>=4 && rp-sp>=2) return 0.0;
+  const q=1-p, denom=p*p+q*q, pd=denom>0?(p*p)/denom:0.5;
+  if(sp>=3 && rp>=3){ const d=sp-rp; if(d===0) return pd; if(d>0) return p+q*pd; return p*pd; }
+  return p*gameWinProb(p,sp+1,rp)+q*gameWinProb(p,sp,rp+1);
+}
+function holdProb(p){ return gameWinProb(p,0,0); }
+function tbDeuceValues(pa,pb){
+  const keys=[]; for(const d of [-1,0,1]) for(const s of [0,1]) for(const l of [1,2]) keys.push([d,s,l]);
+  let V=new Map(keys.map(k=>[k.join(","),0.5]));
+  for(let i=0;i<400;i++){
+    const nV=new Map();
+    for(const [d,s,l] of keys){
+      const q=s===0?pa:1-pb;
+      let ns,nl; if(l>1){ns=s;nl=l-1;} else {ns=1-s;nl=2;}
+      const up=d+1>=2?1.0:V.get([d+1,ns,nl].join(","));
+      const dn=d-1<=-2?0.0:V.get([d-1,ns,nl].join(","));
+      nV.set([d,s,l].join(","), q*up+(1-q)*dn);
+    }
+    V=nV;
+  }
+  return V;
+}
+function tiebreakWinProb(pa,pb,a=0,b=0,server=0,left=1,target=7){
+  const V=tbDeuceValues(pa,pb); const memo=new Map();
+  function rec(a,b,s,l){
+    if(a>=target && a-b>=2) return 1.0;
+    if(b>=target && b-a>=2) return 0.0;
+    if(a>=target-1 && b>=target-1) return V.get([a-b,s,l].join(","));
+    const key=[a,b,s,l].join(",");
+    if(memo.has(key)) return memo.get(key);
+    const q=s===0?pa:1-pb;
+    let ns,nl; if(l>1){ns=s;nl=l-1;} else {ns=1-s;nl=2;}
+    const r=q*rec(a+1,b,ns,nl)+(1-q)*rec(a,b+1,ns,nl);
+    memo.set(key,r); return r;
+  }
+  return rec(a,b,server,left);
+}
+function addTo(o,k,v){ o[k]=(o[k]||0)+v; }
+function makeModel(pa,pb,fmt){
+  pa=Math.min(Math.max(pa,1e-6),1-1e-6); pb=Math.min(Math.max(pb,1e-6),1-1e-6);
+  const holdA=holdProb(pa), holdB=holdProb(pb);
+  const setMemo=new Map(), matchMemo=new Map();
+  function setDist(setIndex,ga,gb,server){
+    const key=`${setIndex}|${ga}|${gb}|${server}`;
+    if(setMemo.has(key)) return setMemo.get(key);
+    const tbPts=tbPointsForSet(fmt,setIndex); const out={};
+    if(Math.max(ga,gb)>=fmt.setGames && Math.abs(ga-gb)>=2){ addTo(out,`${ga>gb?0:1}|${server}`,1.0); }
+    else if(tbPts!==null && ga===fmt.tiebreakAt && gb===fmt.tiebreakAt){
+      const tb=tiebreakWinProb(pa,pb,0,0,server,1,tbPts); const nxt=1-server;
+      addTo(out,`0|${nxt}`,tb); addTo(out,`1|${nxt}`,1-tb);
+    } else if(tbPts===null && Math.max(ga,gb)>=fmt.advCap){ addTo(out,`${ga>gb?0:1}|${server}`,1.0); }
+    else {
+      const wa=server===0?holdA:1-holdB;
+      for(const [wg,p] of [[0,wa],[1,1-wa]]){
+        if(p<=0) continue;
+        const nga=ga+(wg===0?1:0), ngb=gb+(wg===1?1:0);
+        const sub=setDist(setIndex,nga,ngb,1-server);
+        for(const [k,q] of Object.entries(sub)) addTo(out,k,p*q);
+      }
+    }
+    setMemo.set(key,out); return out;
+  }
+  function currentSetDist(score,pg){
+    const out={};
+    if(score.inTiebreak){
+      const nxt=1-score.tbFirstServer;
+      addTo(out,`0|${nxt}`,pg); addTo(out,`1|${nxt}`,1-pg); return out;
+    }
+    for(const [wg,p] of [[0,pg],[1,1-pg]]){
+      if(p<=0) continue;
+      const nga=score.games[0]+(wg===0?1:0), ngb=score.games[1]+(wg===1?1:0);
+      const sub=setDist(score.setIndex,nga,ngb,1-score.server);
+      for(const [k,q] of Object.entries(sub)) addTo(out,k,p*q);
+    }
+    return out;
+  }
+  function matchDist(sa,sb,setIndex,server){
+    const key=`${sa}|${sb}|${setIndex}|${server}`;
+    if(matchMemo.has(key)) return matchMemo.get(key);
+    const need=setsToWin(fmt); const out={};
+    if(sa>=need||sb>=need){ addTo(out,`${sa>sb?0:1}|${sa}|${sb}`,1.0); }
+    else {
+      const sd=setDist(setIndex,0,0,server);
+      for(const [k,p] of Object.entries(sd)){
+        const [w,ns]=k.split("|").map(Number);
+        const nsa=sa+(w===0?1:0), nsb=sb+(w===1?1:0);
+        const md=matchDist(nsa,nsb,setIndex+1,ns);
+        for(const [k2,q] of Object.entries(md)) addTo(out,k2,p*q);
+      }
+    }
+    matchMemo.set(key,out); return out;
+  }
+  function gameProbA(score){
+    if(score.inTiebreak){
+      const target=tbPointsForSet(fmt,score.setIndex)||fmt.tiebreakPoints;
+      return tiebreakWinProb(pa,pb,score.points[0],score.points[1],score.server,score.tbLeft,target);
+    }
+    if(score.server===0) return gameWinProb(pa,score.points[0],score.points[1]);
+    return 1-gameWinProb(pb,score.points[1],score.points[0]);
+  }
+  function outcomeDist(score){
+    if(score.winner!==null) return { [`${score.winner}|${score.sets[0]}|${score.sets[1]}`]:1.0 };
+    const csd=currentSetDist(score,gameProbA(score)); const out={};
+    for(const [k,p] of Object.entries(csd)){
+      const [w,ns]=k.split("|").map(Number);
+      const nsa=score.sets[0]+(w===0?1:0), nsb=score.sets[1]+(w===1?1:0);
+      const md=matchDist(nsa,nsb,score.setIndex+1,ns);
+      for(const [k2,q] of Object.entries(md)) addTo(out,k2,p*q);
+    }
+    return out;
+  }
+  function matchProb(score){
+    const od=outcomeDist(score); let p=0;
+    for(const [k,v] of Object.entries(od)) if(k.split("|")[0]==="0") p+=v;
+    return p;
+  }
+  function setScoreDist(score,top=3){
+    const od=outcomeDist(score); const agg={};
+    for(const [k,v] of Object.entries(od)){ const [,fa,fb]=k.split("|"); addTo(agg,`${fa}-${fb}`,v); }
+    return Object.entries(agg).sort((x,y)=>y[1]-x[1]).slice(0,top);
+  }
+  return { matchProb, setScoreDist };
+}
+
+/* ============================================================
+   Pressure detection — reuses awardPoint's own game/set/match
+   logic (via a cloned, simulated score) instead of re-deriving
+   "is this a break/set/match point" as a separate formula.
+   ============================================================ */
+function pressureInfo(score, fmt){
+  if(score.winner!==null) return { isPressure:false, pressureType:null };
+  const server=score.server, returner=1-server;
+  const simS=cloneScore(score); const evS=awardPoint(simS, server, fmt);
+  const simR=cloneScore(score); const evR=awardPoint(simR, returner, fmt);
+  const has=(evs,prefix)=>evs.some(e=>e.startsWith(prefix));
+  if(has(evS,"MATCH")||has(evR,"MATCH")) return { isPressure:true, pressureType:"match point" };
+  if(has(evS,"SET")||has(evR,"SET"))     return { isPressure:true, pressureType:"set point" };
+  if(has(evR,"BREAK"))                    return { isPressure:true, pressureType:"break point" };
+  if(score.inTiebreak)                    return { isPressure:true, pressureType:"tiebreak" };
+  return { isPressure:false, pressureType:null };
+}
+
+/* ============================================================
+   db capability — cross-match player history. Best-effort: every
+   call is guarded, and the Match tab works fully without it.
+   ============================================================ */
+let __dbPromise = null;
+function getDb(){
+  if(__dbPromise) return __dbPromise;
+  __dbPromise = (typeof window!=="undefined" && window.claude && window.claude.use)
+    ? window.claude.use("db").catch(()=>null)
+    : Promise.resolve(null);
+  return __dbPromise;
+}
+function genId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+async function syncMatchToDb(){
+  if(state.isDemo || !state.matchId) return;
+  const db = await getDb();
+  if(!db) return;
+  try{
+    const ref = db.collection("matches").doc(state.matchId);
+    const body = {
+      nameA: state.nameA, nameB: state.nameB, fmtKey: state.fmtKey,
+      startedAt: new Date(state.matchStartMs).toISOString(),
+      updatedAt: new Date().toISOString(),
+      winner: state.score.winner,
+      finalSets: state.score.sets,
+      points: state.log.slice().reverse().map(e => ({
+        server: e.server, winner: e.winner, n: e.hitters ? e.hitters.length : 1,
+        pressure: !!e.isPressure, pressureType: e.pressureType || null,
+        gapMs: e.gapMs ?? null, rallyMs: e.rallyMs || [],
+      })),
+    };
+    if(!state.dbCreated){ await ref.set(body); state.dbCreated = true; }
+    else{ await ref.update(body); }
+  }catch(e){ /* best-effort — Match tab keeps working regardless */ }
+}
+
+/* ============================================================
+   App state
+   ============================================================ */
+const STORE_KEY = "rally-ledger-v1";
+
+function demoState(){
+  const fmtKey="bo3", fmt=FORMATS[fmtKey];
+  let score=newScore(0);
+  const serverPts=[[0,0],[0,0]];
+  const log=[];
+  const seq=[ // [hitters, winner]
+    [[0],0],[[1],1],[[0,1],0],[[0,1,0],1],[[0],0],[[1],1],[[0,1,0,1],1],[[0],0],[[0,1],0],
+  ];
+  for(const [hitters,winner] of seq){
+    const server=score.server;
+    serverPts[server][winner===server?0:1]+=1;
+    const events=awardPoint(score,winner,fmt);
+    log.unshift({ desc:describeRally(hitters,winner,server), server, winner, hitters, events, line:scoreLineShort(score) });
+  }
+  return {
+    nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], isDemo:true,
+    matchId:null, matchStartMs:null, lastPointMs:null, dbCreated:false,
+  };
+}
+function startFreshMatch(){
+  const keepNames = { nameA: state.nameA, nameB: state.nameB, fmtKey: state.fmtKey };
+  state = {
+    ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[],
+    history:[], isDemo:false,
+    matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
+  };
+}
+
+function describeRally(hitters,winner,server){
+  const h=hitters.length?hitters:[server];
+  const n=h.length, last=h[h.length-1];
+  const end = winner===last?"winner":"error";
+  if(n===1) return end==="winner" ? "ace / service winner" : "double fault";
+  if(n===2) return `return ${end}`;
+  return `${n}-shot rally, ${last===0?"A":"B"} ${end} on shot ${n}`;
+}
+function scoreLineShort(s){
+  const [pa,pb]=pointParts(s);
+  return `${s.games[0]}-${s.games[1]} · ${pa}-${pb}`;
+}
+
+let state = load() || demoState();
+state.rally = state.rally || [];
+state.rallyTimes = state.rallyTimes || [];
+state.history = state.history || [];
+if(state.matchId === undefined) state.matchId = null;
+if(state.matchStartMs === undefined) state.matchStartMs = null;
+if(state.lastPointMs === undefined) state.lastPointMs = null;
+if(state.dbCreated === undefined) state.dbCreated = false;
+
+function load(){
+  try{
+    const raw=localStorage.getItem(STORE_KEY);
+    if(!raw) return null;
+    return JSON.parse(raw);
+  }catch(e){ return null; }
+}
+function save(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+const $ = sel => document.querySelector(sel);
+
+function render(){
+  const { nameA, nameB, fmtKey, score, isDemo } = state;
+  const fmt = FORMATS[fmtKey];
+
+  $("#nameA").value = nameA;
+  $("#nameB").value = nameB;
+
+  $("#banner-slot").innerHTML = isDemo
+    ? `<div class="banner"><span>Showing demo data so you can see how it works.</span><button id="clearDemo">New match</button></div>`
+    : "";
+
+  const locked = score.pointsPlayed>0 || score.sets[0]||score.sets[1];
+  $("#fmt-slot").innerHTML = locked
+    ? `<span class="fmt-label">${fmt.label}</span>`
+    : `<select id="fmtSelect">${Object.entries(FORMATS).map(([k,v])=>
+        `<option value="${k}" ${k===fmtKey?"selected":""}>${v.label}</option>`).join("")}</select>`;
+
+  renderScorecard(score, nameA, nameB);
+  renderControls(score, nameA, nameB);
+  renderPredict(score);
+  renderLog(nameA, nameB);
+}
+
+function renderScorecard(score, nameA, nameB){
+  const [pa,pb] = pointParts(score);
+  const srvName = score.server===0 ? nameA : nameB;
+  const srvSide = score.server===0 ? "a" : "b";
+  const setPills = score.setScores.map(([a,b])=>`<b>${a}-${b}</b>`).join("  ");
+
+  if(score.winner!==null){
+    const wName = score.winner===0?nameA:nameB;
+    $("#score-slot").innerHTML = `
+      <div class="match-banner">
+        ${wName} wins
+        <div>${setPills}${setPills?"  ":""}${score.games[0]}-${score.games[1]}</div>
+      </div>`;
+    return;
+  }
+
+  $("#score-slot").innerHTML = `
+    <div class="scorecard">
+      <div class="setline">
+        ${setPills ? setPills+"&nbsp;&nbsp;&nbsp;" : ""}<b>${score.games[0]}-${score.games[1]}</b>
+        ${score.inTiebreak ? " · tiebreak" : ""}
+      </div>
+      <div class="points">
+        <div class="num a">${pa}</div>
+        <div class="sep">–</div>
+        <div class="num b">${pb}</div>
+      </div>
+      <div class="serve-tag"><span class="dot on-${srvSide}"></span>${srvName} serving</div>
+    </div>`;
+}
+
+function renderControls(score, nameA, nameB){
+  if(score.winner!==null){
+    $("#live-controls").innerHTML = `<button class="newmatch" id="newMatchMain">Start new match</button>`;
+    return;
+  }
+  const rally = state.rally;
+  const dots = rally.length
+    ? rally.map(h=>`<span class="rdot ${h===0?"a":"b"}"></span>`).join("")
+    : `<span class="rally-empty">(serve — tap Point → once it's decided, or tap HIT to log the rally)</span>`;
+
+  $("#live-controls").innerHTML = `
+    <div>
+      <p class="section-label">Rally</p>
+      <div class="rally-track">${dots}</div>
+    </div>
+    <div class="tapgrid" style="margin-top:8px;">
+      <button class="tap a" id="hitA">HIT<small>${escapeHtml(nameA)}</small></button>
+      <button class="tap b" id="hitB">HIT<small>${escapeHtml(nameB)}</small></button>
+    </div>
+    <div class="outgrid" style="margin-top:10px;">
+      <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}</button>
+      <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}</button>
+    </div>
+    <div class="microrow" style="margin-top:8px;">
+      <button class="micro" id="undoTap" ${rally.length?"":"disabled"}>undo tap</button>
+      <button class="micro" id="undoPoint" ${state.history && state.history.length?"":"disabled"}>undo last point</button>
+    </div>`;
+}
+
+function renderPredict(score){
+  const rate = (wl)=> (wl[0]+wl[1] < 4) ? 0.62 : wl[0]/(wl[0]+wl[1]);
+  const pa = rate(state.serverPts[0]), pb = rate(state.serverPts[1]);
+  const fmt = FORMATS[state.fmtKey];
+  const model = makeModel(pa, pb, fmt);
+  const pWinA = score.winner!==null ? (score.winner===0?1:0) : model.matchProb(score);
+  const pctA = Math.round(pWinA*100), pctB = 100-pctA;
+  const distTop = score.winner!==null
+    ? [[`${score.sets[0]}-${score.sets[1]}`,1]]
+    : model.setScoreDist(score, 4);
+
+  $("#predict-slot").innerHTML = `
+    <div class="predict-bar">
+      <div class="seg-a" style="width:${pctA}%">${pctA>=12?pctA+"%":""}</div>
+      <div class="seg-b" style="width:${pctB}%">${pctB>=12?pctB+"%":""}</div>
+    </div>
+    <div class="row" style="justify-content:space-between;">
+      <span class="predict-caption">${escapeHtml(state.nameA)} ${pctA}%</span>
+      <span class="predict-caption">${escapeHtml(state.nameB)} ${pctB}%</span>
+    </div>
+    <div class="setdist">
+      ${distTop.map(([label,p])=>`
+        <div class="setdist-row">
+          <span>${label}</span>
+          <div class="setdist-track"><div class="setdist-fill" style="width:${Math.round(p*100)}%"></div></div>
+          <span>${(p*100).toFixed(0)}%</span>
+        </div>`).join("")}
+    </div>
+    <p class="predict-caption" style="margin-top:8px;">serve win rate used — ${escapeHtml(state.nameA)} ${Math.round(pa*100)}% · ${escapeHtml(state.nameB)} ${Math.round(pb*100)}% ${(state.serverPts[0][0]+state.serverPts[0][1]<4)?"(default until 4+ points served)":""}</p>
+  `;
+}
+
+function renderLog(nameA, nameB){
+  const log = state.log;
+  $("#log-count").textContent = log.length ? `${log.length} played` : "";
+  if(!log.length){
+    $("#log-slot").innerHTML = `<p class="log-empty">No points yet — tap Point → above to start.</p>`;
+    return;
+  }
+  $("#log-slot").innerHTML = log.slice(0,40).map(entry => `
+    <div class="log-row">
+      <span class="log-dot" style="background:${entry.server===0?'var(--a)':'var(--b)'}"></span>
+      <span class="log-desc">${escapeHtml(entry.desc)}${entry.isPressure?`<span class="chip">${escapeHtml(entry.pressureType)}</span>`:""}${entry.events && entry.events.length?`<small>${entry.events.map(escapeHtml).join(" · ")}</small>`:""}</span>
+      <span class="log-score">${entry.line}</span>
+    </div>`).join("");
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+/* ============================================================
+   Actions
+   ============================================================ */
+function finalizePoint(winner){
+  if(state.isDemo) startFreshMatch();
+  const fmt = FORMATS[state.fmtKey];
+  const server = state.score.server;
+  const hitters = state.rally.length ? state.rally.slice() : [server];
+  const { isPressure, pressureType } = pressureInfo(state.score, fmt);
+
+  const now = Date.now();
+  const gapMs = state.lastPointMs!=null ? now - state.lastPointMs : null;
+  const rallyMs = state.rallyTimes.length>=2
+    ? state.rallyTimes.slice(1).map((t,i)=>t-state.rallyTimes[i])
+    : [];
+
+  state.history = state.history || [];
+  state.history.push({
+    score: cloneScore(state.score),
+    serverPts: JSON.parse(JSON.stringify(state.serverPts)),
+    log: state.log.slice(),
+    lastPointMs: state.lastPointMs,
+  });
+
+  state.serverPts[server][winner===server?0:1] += 1;
+  const events = awardPoint(state.score, winner, fmt);
+  state.log.unshift({
+    desc: describeRally(hitters, winner, server),
+    server, winner, hitters, events, line: scoreLineShort(state.score),
+    isPressure, pressureType, tMs: now, gapMs, rallyMs,
+  });
+  state.rally = []; state.rallyTimes = [];
+  state.lastPointMs = now;
+  save(); render();
+  syncMatchToDb();
+}
+
+document.addEventListener("click", (e) => {
+  const id = e.target.id;
+  if(id==="hitA"){ if(state.isDemo) startFreshMatch(); state.rally.push(0); state.rallyTimes.push(Date.now()); save(); render(); }
+  else if(id==="hitB"){ if(state.isDemo) startFreshMatch(); state.rally.push(1); state.rallyTimes.push(Date.now()); save(); render(); }
+  else if(id==="winA"){ finalizePoint(0); }
+  else if(id==="winB"){ finalizePoint(1); }
+  else if(id==="undoTap"){ state.rally.pop(); state.rallyTimes.pop(); save(); render(); }
+  else if(id==="undoPoint"){
+    if(state.history && state.history.length){
+      const prev = state.history.pop();
+      state.score = prev.score; state.serverPts = prev.serverPts; state.log = prev.log;
+      state.lastPointMs = prev.lastPointMs;
+      save(); render();
+      syncMatchToDb();
+    }
+  }
+  else if(id==="newMatchTop" || id==="newMatchMain" || id==="clearDemo"){
+    startFreshMatch();
+    save(); render();
+  }
+  else if(id==="tabMatch"){ switchTab("match"); }
+  else if(id==="tabPlayers"){ switchTab("players"); }
+  else if(id==="refreshPlayers"){ loadMatches(); }
+  else if(id==="backToPlayers"){ playersView.screen="list"; playersView.selected=null; renderPlayersView(); }
+  else {
+    const row = e.target.closest ? e.target.closest(".player-row") : null;
+    if(row){ playersView.selected = row.dataset.player; playersView.screen="profile"; renderPlayersView(); }
+  }
+});
+
+document.addEventListener("change", (e) => {
+  if(e.target.id==="fmtSelect"){ state.fmtKey = e.target.value; save(); render(); }
+});
+document.addEventListener("input", (e) => {
+  if(e.target.id==="nameA"){ state.nameA = e.target.value || "A"; save(); renderNamesDependent(); }
+  if(e.target.id==="nameB"){ state.nameB = e.target.value || "B"; save(); renderNamesDependent(); }
+});
+function renderNamesDependent(){
+  renderScorecard(state.score, state.nameA, state.nameB);
+  renderControls(state.score, state.nameA, state.nameB);
+  renderPredict(state.score);
+  renderLog(state.nameA, state.nameB);
+}
+
+/* ============================================================
+   Players tab — cross-match fatigue & clutch analysis, read from db
+   ============================================================ */
+let playersView = { loaded:false, loading:false, error:null, matches:[], screen:"list", selected:null };
+
+function switchTab(tab){
+  $("#view-match").hidden = tab!=="match";
+  $("#view-players").hidden = tab!=="players";
+  $("#tabMatch").classList.toggle("active", tab==="match");
+  $("#tabPlayers").classList.toggle("active", tab==="players");
+  if(tab==="players" && !playersView.loaded){ playersView.loaded=true; loadMatches(); }
+}
+
+async function loadMatches(){
+  playersView.loading = true; playersView.error = null; renderPlayersView();
+  const db = await getDb();
+  if(!db){ playersView.loading=false; playersView.error="no-db"; renderPlayersView(); return; }
+  try{
+    const snap = await db.collection("matches").orderBy("updatedAt","desc").limit(200).get();
+    playersView.matches = snap.docs.map(d => d.data());
+  }catch(e){ playersView.error = "load-failed"; }
+  playersView.loading = false; renderPlayersView();
+}
+
+function distinctPlayers(matches){
+  const map = new Map();
+  for(const m of matches){
+    for(const nm of [m.nameA, m.nameB]){
+      if(!nm) continue;
+      const k = nm.trim().toLowerCase();
+      if(!k) continue;
+      if(!map.has(k)) map.set(k, { name: nm.trim(), count: 0 });
+      map.get(k).count += 1;
+    }
+  }
+  return Array.from(map.values()).sort((a,b)=>b.count-a.count);
+}
+
+function pct(w,t){ return t>0 ? Math.round((w/t)*100) : null; }
+function fmtPct(v){ return (v===null||v===undefined) ? "—" : v+"%"; }
+
+function computeProfile(name, matches){
+  const key = name.trim().toLowerCase();
+  const relevant = matches.filter(m =>
+    (m.nameA||"").trim().toLowerCase()===key || (m.nameB||"").trim().toLowerCase()===key);
+
+  let serveW=0, serveL=0, retW=0, retL=0, pressW=0, pressL=0, normW=0, normL=0, totalPoints=0;
+  const byType = {
+    "break point": {win:0,total:0}, "set point": {win:0,total:0},
+    "match point": {win:0,total:0}, "tiebreak": {win:0,total:0},
+  };
+  const buckets = [ {win:0,loss:0,gapSum:0,gapN:0}, {win:0,loss:0,gapSum:0,gapN:0}, {win:0,loss:0,gapSum:0,gapN:0} ];
+
+  for(const m of relevant){
+    const side = (m.nameA||"").trim().toLowerCase()===key ? 0 : 1;
+    const pts = m.points || [];
+    const n = pts.length;
+    pts.forEach((p, idx) => {
+      totalPoints++;
+      const won = p.winner === side;
+      if(p.server === side){ won?serveW++:serveL++; } else { won?retW++:retL++; }
+      if(p.pressure){ won?pressW++:pressL++; } else { won?normW++:normL++; }
+      if(p.pressureType && byType[p.pressureType]){
+        byType[p.pressureType].total++; if(won) byType[p.pressureType].win++;
+      }
+      const frac = n>1 ? idx/(n-1) : 0;
+      const b = frac<0.34 ? 0 : (frac<0.67 ? 1 : 2);
+      won ? buckets[b].win++ : buckets[b].loss++;
+      if(p.gapMs!=null && p.gapMs>=0 && p.gapMs<5*60*1000){ buckets[b].gapSum += p.gapMs; buckets[b].gapN++; }
+    });
+  }
+
+  const enoughForClutch = (pressW+pressL)>=5 && (normW+normL)>=5;
+  return {
+    matches: relevant.length, points: totalPoints,
+    serveWinPct: pct(serveW, serveW+serveL), returnWinPct: pct(retW, retW+retL),
+    pressureWinPct: pct(pressW, pressW+pressL), normalWinPct: pct(normW, normW+normL),
+    clutchDelta: enoughForClutch ? pct(pressW,pressW+pressL)-pct(normW,normW+normL) : null,
+    byType,
+    buckets: buckets.map(b => ({
+      winPct: pct(b.win, b.win+b.loss), n: b.win+b.loss,
+      avgGapSec: b.gapN ? Math.round(b.gapSum/b.gapN/100)/10 : null,
+    })),
+    recent: relevant.slice()
+      .sort((a,b2)=>(b2.updatedAt||"").localeCompare(a.updatedAt||""))
+      .slice(0,10)
+      .map(m => ({
+        opponent: (m.nameA||"").trim().toLowerCase()===key ? m.nameB : m.nameA,
+        line: `${m.nameA} ${(m.finalSets||[0,0])[0]}-${(m.finalSets||[0,0])[1]} ${m.nameB}` +
+              (m.winner!=null ? ` · ${m.winner===0?m.nameA:m.nameB} won` : " · in progress"),
+        when: (m.updatedAt||"").slice(0,10),
+      })),
+  };
+}
+
+function renderPlayersView(){
+  const root = $("#view-players");
+  if(playersView.loading){ root.innerHTML = `<p class="log-empty">Loading recorded matches…</p>`; return; }
+  if(playersView.error==="no-db"){
+    root.innerHTML = `<div class="panel">
+      <p class="section-label">Players</p>
+      <p class="predict-caption" style="margin-top:8px;">
+        Cross-match player history needs this artifact's data store, which this view
+        doesn't have access to. The Match tab still works fully — open this artifact
+        from claude.ai to get player history too.
+      </p>
+    </div>`;
+    return;
+  }
+  if(playersView.error==="load-failed"){
+    root.innerHTML = `<div class="panel"><p class="section-label">Players</p>
+      <p class="predict-caption" style="margin-top:8px;">Couldn't load matches just now.</p>
+      <button class="micro" id="refreshPlayers" style="margin-top:6px;">try again</button></div>`;
+    return;
+  }
+  if(playersView.screen==="profile" && playersView.selected){
+    root.innerHTML = renderProfileHtml(playersView.selected, playersView.matches);
+    return;
+  }
+  const players = distinctPlayers(playersView.matches);
+  root.innerHTML = `
+    <div class="panel">
+      <div class="log-header">
+        <p class="section-label">Players</p>
+        <button class="micro" id="refreshPlayers">refresh</button>
+      </div>
+      <p class="predict-caption" style="margin-top:6px;">
+        ${playersView.matches.length} match${playersView.matches.length===1?"":"es"} recorded here.
+        Names must match exactly (case-insensitive) to link across matches.
+      </p>
+      ${players.length ? players.map(p => `
+        <button class="player-row" data-player="${escapeHtml(p.name)}">
+          <span>${escapeHtml(p.name)}</span>
+          <span class="predict-caption">${p.count} match${p.count===1?"":"es"}</span>
+        </button>`).join("") : `<p class="log-empty">No matches recorded yet — play one on the Match tab.</p>`}
+    </div>`;
+}
+
+function renderProfileHtml(name, matches){
+  const p = computeProfile(name, matches);
+  const bucketLabel = ["Early","Mid","Late"];
+  return `
+    <div class="panel">
+      <button class="micro backlink" id="backToPlayers">‹ players</button>
+      <p class="title" style="font-size:22px; margin-top:6px;">${escapeHtml(name)}</p>
+      <p class="predict-caption">${p.matches} match${p.matches===1?"":"es"} · ${p.points} points recorded</p>
+
+      <div class="stat-grid" style="margin-top:12px;">
+        <div class="stat-tile"><span class="stat-num">${fmtPct(p.serveWinPct)}</span><span class="stat-label">serve points won</span></div>
+        <div class="stat-tile"><span class="stat-num">${fmtPct(p.returnWinPct)}</span><span class="stat-label">return points won</span></div>
+      </div>
+
+      <p class="section-label" style="margin-top:16px;">Clutch — pressure vs normal points</p>
+      <div class="stat-grid" style="margin-top:8px;">
+        <div class="stat-tile"><span class="stat-num">${fmtPct(p.pressureWinPct)}</span><span class="stat-label">break / set / match pts</span></div>
+        <div class="stat-tile"><span class="stat-num">${fmtPct(p.normalWinPct)}</span><span class="stat-label">ordinary points</span></div>
+      </div>
+      ${p.clutchDelta===null
+        ? `<p class="predict-caption" style="margin-top:8px;">Not enough pressure points logged yet for a reliable read.</p>`
+        : `<p class="predict-caption" style="margin-top:8px;">
+             <span class="clutch-badge ${p.clutchDelta>=0?'up':'down'}">${p.clutchDelta>=0?'+':''}${p.clutchDelta} pts</span>
+             ${p.clutchDelta>=0 ? "wins pressure points more often than ordinary ones" : "wins pressure points less often than ordinary ones"}
+           </p>`}
+      <div class="setdist" style="margin-top:10px;">
+        ${Object.entries(p.byType).map(([label,b]) => `
+          <div class="setdist-row">
+            <span>${label}</span>
+            <div class="setdist-track"><div class="setdist-fill" style="width:${b.total?Math.round(b.win/b.total*100):0}%"></div></div>
+            <span>${b.total?Math.round(b.win/b.total*100)+"%":"—"} <span style="opacity:.6;">(${b.total})</span></span>
+          </div>`).join("")}
+      </div>
+
+      <p class="section-label" style="margin-top:16px;">Fatigue — through the match</p>
+      <div class="trend-row" style="margin-top:8px;">
+        ${p.buckets.map((b,i)=>`
+          <div class="trend-col">
+            <div class="trend-bar-track"><div class="trend-bar-fill" style="height:${b.winPct??0}%"></div></div>
+            <span class="trend-pct">${fmtPct(b.winPct)}</span>
+            <span class="predict-caption">${bucketLabel[i]}</span>
+            ${b.avgGapSec!=null?`<span class="predict-caption">${b.avgGapSec}s/pt</span>`:""}
+          </div>`).join("")}
+      </div>
+      <p class="predict-caption" style="margin-top:6px;">
+        Win rate and average time between points, split across each match's first/middle/last
+        third of points and pooled across all matches. A falling win rate alongside a rising
+        time-between-points points at fatigue.
+      </p>
+
+      <p class="section-label" style="margin-top:16px;">Recent matches</p>
+      <div class="log" style="margin-top:4px;">
+        ${p.recent.length ? p.recent.map(r => `
+          <div class="log-row" style="grid-template-columns:1fr auto;">
+            <span class="log-desc">vs ${escapeHtml(r.opponent||"?")}<small>${escapeHtml(r.line)}</small></span>
+            <span class="log-score">${escapeHtml(r.when||"")}</span>
+          </div>`).join("") : `<p class="log-empty">No matches yet.</p>`}
+      </div>
+    </div>`;
+}
+
+render();
+</script>
