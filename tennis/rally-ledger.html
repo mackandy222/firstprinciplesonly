@@ -39,9 +39,16 @@
   }
   .wrap{ max-width:480px; margin:0 auto; padding:16px 16px 48px; display:flex; flex-direction:column; gap:14px; }
 
-  /* On a laptop-width screen, dock Commentary as a sticky right-hand
-     column instead of burying it in the scroll — the phone layout
-     above is untouched below this breakpoint. */
+  /* Commentary never grows the layout around it: it's a capped,
+     internally-scrolling box on every screen size. */
+  .commentary-panel{ max-height:220px; overflow-y:auto; }
+
+  /* On a laptop-width screen, dock it as a sticky right-hand column
+     instead of sitting in the scroll — phone layout above this
+     breakpoint is untouched. min-height:0 matters here: a grid item
+     spanning rows otherwise sizes those rows to its full content
+     height even with max-height set, which was pushing the left
+     column down as commentary text grew. */
   @media (min-width: 860px){
     .wrap{ max-width:840px; }
     #view-match{
@@ -49,7 +56,7 @@
     }
     #view-match > *{ grid-column:1; }
     #view-match > .commentary-panel{
-      grid-column:2; grid-row:1 / -1;
+      grid-column:2; grid-row:1 / -1; min-height:0;
       position:sticky; top:16px; max-height:calc(100vh - 32px); overflow-y:auto;
     }
   }
@@ -657,6 +664,56 @@ function getSample(){
 let commentaryState = { loading:false, text:"", error:null, truncated:false };
 let __commentaryAbort = null;
 
+/* Precomputed, verifiable signals for the commentary prompt — streaks,
+   pressure-point performance, pace anomalies, first/second-half swing.
+   Handing Claude real numbers instead of a raw point list to eyeball
+   is deliberate: the sets-tally bug earlier showed it will confabulate
+   a pattern narrative if it has to infer one itself. */
+function computePatterns(points, nameA, nameB){
+  const n = points.length;
+  if(n < 3) return "Not enough points yet for pattern detection.";
+
+  let curSide = points[0].winner, curLen = 1, bestLen = 1, bestSide = curSide, bestEndIdx = 0;
+  for(let i=1;i<n;i++){
+    if(points[i].winner === curSide){ curLen++; } else { curSide = points[i].winner; curLen = 1; }
+    if(curLen > bestLen){ bestLen = curLen; bestSide = curSide; bestEndIdx = i; }
+  }
+
+  const pressWL = [{w:0,l:0},{w:0,l:0}], normWL = [{w:0,l:0},{w:0,l:0}];
+  for(const p of points){
+    const bucket = p.isPressure ? pressWL : normWL;
+    bucket[p.winner].w++; bucket[1-p.winner].l++;
+  }
+  const pf = wl => (wl.w+wl.l>0) ? `${Math.round(100*wl.w/(wl.w+wl.l))}% (${wl.w}/${wl.w+wl.l})` : "none yet";
+
+  const parts = [];
+  if(bestLen >= 3) parts.push(`Longest run: ${bestSide===0?nameA:nameB} won ${bestLen} points in a row, ending at point ${bestEndIdx+1} of ${n}.`);
+  parts.push(`Pressure points (break/set/match/tiebreak) — ${nameA}: ${pf(pressWL[0])}, ${nameB}: ${pf(pressWL[1])}.`);
+  if(normWL[0].w+normWL[0].l > 0) parts.push(`Ordinary points — ${nameA}: ${pf(normWL[0])}, ${nameB}: ${pf(normWL[1])}.`);
+
+  const gaps = points.map(p=>p.gapMs).filter(g=>g!=null && g>=0 && g<10*60*1000);
+  if(gaps.length >= 3){
+    const avg = gaps.reduce((a,b)=>a+b,0)/gaps.length;
+    let maxGap=-1, maxIdx=-1;
+    points.forEach((p,i)=>{ if(p.gapMs!=null && p.gapMs>maxGap){ maxGap=p.gapMs; maxIdx=i; } });
+    parts.push(maxGap > avg*2.2 && maxGap > 20000
+      ? `Pace: average ${(avg/1000).toFixed(0)}s between points, but a notably longer ${(maxGap/1000).toFixed(0)}s gap right before point ${maxIdx+1} — possibly a pause in play, not necessarily fatigue.`
+      : `Pace has stayed fairly even, averaging ${(avg/1000).toFixed(0)}s between points.`);
+  }
+
+  if(n >= 8){
+    const mid = Math.floor(n/2);
+    const winPct = (arr,side) => Math.round(100*arr.filter(p=>p.winner===side).length/arr.length);
+    const a1 = winPct(points.slice(0,mid),0), a2 = winPct(points.slice(mid),0);
+    const delta = a2-a1;
+    parts.push(Math.abs(delta) >= 20
+      ? `Momentum: ${nameA} won ${a1}% of points in the first half recorded vs ${a2}% in the second half — a ${Math.abs(delta)}-point ${delta>0?"swing toward":"swing away from"} ${nameA}.`
+      : `Momentum has stayed fairly steady — ${nameA} won ${a1}% of points in the first half recorded vs ${a2}% in the second half.`);
+  }
+
+  return parts.join("\n");
+}
+
 function buildCommentaryPrompt(){
   const points = state.log.slice().reverse().slice(-300);
   const lines = points.map((e,i) => {
@@ -666,6 +723,7 @@ function buildCommentaryPrompt(){
     const gap = e.gapMs!=null ? ` (${(e.gapMs/1000).toFixed(0)}s since previous point)` : "";
     return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}${gap}`;
   }).join("\n");
+  const patterns = computePatterns(points, state.nameA, state.nameB);
 
   const [setsA, setsB] = state.score.sets;
   const setsTally = `Sets: ${state.nameA} ${setsA} – ${state.nameB} ${setsB}` +
@@ -682,17 +740,20 @@ function buildCommentaryPrompt(){
 
   return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
 
-Each numbered line is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, any game/set/match event, and the seconds since the previous point (a rough pace/fatigue signal — rising gaps or slower rallies later on may indicate tiring, but only say so if the numbers actually show it).
+Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, any game/set/match event, and the seconds since the previous point. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses.
 
-The scores below are ground truth — state them exactly as given and never contradict yourself about who leads. In particular, "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
+The scores are ground truth — state them exactly as given and never contradict yourself about who leads. "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
 ${scoreLine}
 ${statusLine}
 
+Patterns (use these as your evidence — don't recompute them, don't contradict them, and don't claim a pattern they don't support):
+${patterns}
+
 Points:
 ${lines}
 
-Write flowing match commentary in 3-5 short paragraphs, as if recapping the match for someone who wasn't there: the flow and momentum swings, how each player performed specifically on break/set/match points, and any fatigue pattern the pacing data genuinely supports. End with a one-line verdict on how the match stands or ended. Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list. No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, a lopsided pressure-point split, a pace anomaly that might mean fatigue or a pause in play, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama. End with a one-line verdict on how the match stands or ended. Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list. No preamble or heading, just the commentary itself.`;
 }
 
 async function generateCommentary(){
