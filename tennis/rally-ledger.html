@@ -360,7 +360,7 @@
       too and the point ends itself as a double fault. Break/set/match points
       are tagged automatically and feed the Players tab's fatigue and clutch
       breakdowns.<br><br>
-      On a keyboard: <kbd>A</kbd> / <kbd>L</kbd> log a hit (the same player can't
+      On a keyboard: <kbd>A</kbd> or <kbd>S</kbd> / <kbd>L</kbd> log a hit (the same player can't
       hit twice in a row — a rally always alternates). <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd>
       ends the point for the left-hand player, <kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd>
       ends it for the right-hand player. <kbd>F</kbd> marks a serve fault,
@@ -686,20 +686,21 @@ function computePatterns(points, nameA, nameB){
   }
   const pf = wl => (wl.w+wl.l>0) ? `${Math.round(100*wl.w/(wl.w+wl.l))}% (${wl.w}/${wl.w+wl.l})` : "none yet";
 
+  // Who's ending points on their own racquet (winners/aces) vs handing them
+  // away (unforced errors/double faults) — derived from the same hitters
+  // list the description text already uses, not from timing.
+  const forced = [0,0], errors = [0,0];
+  for(const p of points){
+    const h = (p.hitters && p.hitters.length) ? p.hitters : [p.server];
+    const last = h[h.length-1];
+    if(p.winner === last) forced[last]++; else errors[last]++;
+  }
+
   const parts = [];
   if(bestLen >= 3) parts.push(`Longest run: ${bestSide===0?nameA:nameB} won ${bestLen} points in a row, ending at point ${bestEndIdx+1} of ${n}.`);
   parts.push(`Pressure points (break/set/match/tiebreak) — ${nameA}: ${pf(pressWL[0])}, ${nameB}: ${pf(pressWL[1])}.`);
   if(normWL[0].w+normWL[0].l > 0) parts.push(`Ordinary points — ${nameA}: ${pf(normWL[0])}, ${nameB}: ${pf(normWL[1])}.`);
-
-  const gaps = points.map(p=>p.gapMs).filter(g=>g!=null && g>=0 && g<10*60*1000);
-  if(gaps.length >= 3){
-    const avg = gaps.reduce((a,b)=>a+b,0)/gaps.length;
-    let maxGap=-1, maxIdx=-1;
-    points.forEach((p,i)=>{ if(p.gapMs!=null && p.gapMs>maxGap){ maxGap=p.gapMs; maxIdx=i; } });
-    parts.push(maxGap > avg*2.2 && maxGap > 20000
-      ? `Pace: average ${(avg/1000).toFixed(0)}s between points, but a notably longer ${(maxGap/1000).toFixed(0)}s gap right before point ${maxIdx+1} — possibly a pause in play, not necessarily fatigue.`
-      : `Pace has stayed fairly even, averaging ${(avg/1000).toFixed(0)}s between points.`);
-  }
+  parts.push(`Points ended by their own shot (winners/aces) vs their own mistake (unforced errors/double faults) — ${nameA}: ${forced[0]} winners / ${errors[0]} errors, ${nameB}: ${forced[1]} winners / ${errors[1]} errors.`);
 
   if(n >= 8){
     const mid = Math.floor(n/2);
@@ -720,8 +721,7 @@ function buildCommentaryPrompt(){
     const srv = e.server===0 ? state.nameA : state.nameB;
     const tag = e.isPressure ? ` [${e.pressureType}]` : "";
     const ev = e.events && e.events.length ? ` — ${e.events.join("; ")}` : "";
-    const gap = e.gapMs!=null ? ` (${(e.gapMs/1000).toFixed(0)}s since previous point)` : "";
-    return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}${gap}`;
+    return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}`;
   }).join("\n");
   const patterns = computePatterns(points, state.nameA, state.nameB);
 
@@ -740,14 +740,22 @@ function buildCommentaryPrompt(){
     ? `${state.score.winner===0?state.nameA:state.nameB} has won the match.`
     : "The match is still in progress.";
 
+  const rate = wl => (wl[0]+wl[1] < 4) ? 0.62 : wl[0]/(wl[0]+wl[1]);
+  const model = makeModel(rate(state.serverPts[0]), rate(state.serverPts[1]), FORMATS[state.fmtKey]);
+  const pWinA = state.score.winner!=null ? (state.score.winner===0?1:0) : model.matchProb(state.score);
+  const pctA = Math.round(pWinA*100), pctB = 100-pctA;
+  const winProbLine = state.score.winner!=null
+    ? ""
+    : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%.`;
+
   return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
 
-Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, any game/set/match event, and the seconds since the previous point. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses.
+Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. There is no reliable timing data — never mention gaps, pace, or how long anything took.
 
 The scores are ground truth — state them exactly as given and never contradict yourself about who leads. "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
 ${scoreLine}
-${statusLine}
+${statusLine}${winProbLine}
 
 Patterns (use these as your evidence — don't recompute them, don't contradict them, and don't claim a pattern they don't support):
 ${patterns}
@@ -755,7 +763,7 @@ ${patterns}
 Points:
 ${lines}
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, a lopsided pressure-point split, a pace anomaly that might mean fatigue or a pause in play, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama. End with a one-line verdict on how the match stands or ended. Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list. No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${state.score.winner==null ? " End with a one-line read on who's likelier to win from here and why — ground it in the win-probability number above plus whichever Pattern best explains it, not a separate guess." : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list, and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
 }
 
 async function generateCommentary(){
@@ -1052,7 +1060,7 @@ function renderControls(score, nameA, nameB){
       <div class="rally-track">${dots}</div>
     </div>
     <div class="tapgrid" style="margin-top:8px;">
-      <button class="tap a" id="hitA">HIT<small>${escapeHtml(nameA)}</small><kbd>A</kbd></button>
+      <button class="tap a" id="hitA">HIT<small>${escapeHtml(nameA)}</small><kbd>A</kbd><kbd>S</kbd></button>
       <button class="tap b" id="hitB">HIT<small>${escapeHtml(nameB)}</small><kbd>L</kbd></button>
     </div>
     <button class="fault-btn ${state.serveFaults>=1?'active':''}" id="faultBtn" style="margin-top:8px;">
@@ -1319,7 +1327,7 @@ function renderNamesDependent(){
    it. Ignored while typing into a text field, or with a modifier
    held.
    ============================================================ */
-const HIT_KEYS = { a: 0, l: 1 };
+const HIT_KEYS = { a: 0, s: 0, l: 1 };
 const OUTCOME_KEYS = { q:0, w:0, e:0, r:0, u:1, i:1, o:1, p:1 };
 
 document.addEventListener("keydown", (e) => {
