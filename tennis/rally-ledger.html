@@ -749,7 +749,22 @@ function buildMatchContext(){
       : "";
   const [gamesA, gamesB] = state.score.games;
   const gamesLeadNote = gamesA===gamesB ? " (level)" : ` (${gamesA>gamesB?state.nameA:state.nameB} leads this set)`;
-  const scoreLine = `${setsTally}${finishedSetsDetail} Current set game score: ${state.nameA} ${gamesA} – ${state.nameB} ${gamesB} games${gamesLeadNote}.`;
+
+  let pointNote;
+  if(state.score.winner!=null){
+    pointNote = "";
+  } else if(state.score.inTiebreak){
+    const [tbA, tbB] = pointParts(state.score);
+    pointNote = ` Current tiebreak point score: ${state.nameA} ${tbA} – ${state.nameB} ${tbB}.`;
+  } else {
+    const [ptA, ptB] = pointParts(state.score);
+    if(ptA==="40" && ptB==="40") pointNote = " Current point score: deuce (40-40).";
+    else if(ptA==="AD") pointNote = ` Current point score: advantage ${state.nameA} (${ptA}-${ptB}).`;
+    else if(ptB==="AD") pointNote = ` Current point score: advantage ${state.nameB} (${ptA}-${ptB}).`;
+    else pointNote = ` Current point score: ${state.nameA} ${ptA} – ${state.nameB} ${ptB}.`;
+  }
+
+  const scoreLine = `${setsTally}${finishedSetsDetail} Current set game score: ${state.nameA} ${gamesA} – ${state.nameB} ${gamesB} games${gamesLeadNote}.${pointNote}`;
   const statusLine = state.score.winner!=null
     ? `${state.score.winner===0?state.nameA:state.nameB} has won the match.`
     : "The match is still in progress.";
