@@ -957,7 +957,7 @@ function renderScorecard(score, nameA, nameB){
           <button class="stepper" data-side="1" data-dir="-1">▼</button>
         </div>
       </div>
-      <div class="serve-tag"><span class="dot on-${srvSide}"></span>${srvName} serving</div>
+      <div class="serve-tag">${state.rally.includes(1) ? "" : `<span class="dot on-${srvSide}"></span>`}${srvName} serving</div>
     </div>`;
 }
 
