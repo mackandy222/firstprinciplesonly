@@ -39,6 +39,21 @@
   }
   .wrap{ max-width:480px; margin:0 auto; padding:16px 16px 48px; display:flex; flex-direction:column; gap:14px; }
 
+  /* On a laptop-width screen, dock Commentary as a sticky right-hand
+     column instead of burying it in the scroll — the phone layout
+     above is untouched below this breakpoint. */
+  @media (min-width: 860px){
+    .wrap{ max-width:840px; }
+    #view-match{
+      display:grid; grid-template-columns:1fr 320px; align-items:start; gap:14px 22px;
+    }
+    #view-match > *{ grid-column:1; }
+    #view-match > .commentary-panel{
+      grid-column:2; grid-row:1 / -1;
+      position:sticky; top:16px; max-height:calc(100vh - 32px); overflow-y:auto;
+    }
+  }
+
   h1{ text-wrap:balance; }
   .eyebrow{
     font-family:'JetBrains Mono',ui-monospace,monospace; font-size:11px; letter-spacing:.12em;
@@ -194,6 +209,13 @@
   }
   .newmatch:hover{ border-color:var(--court); }
 
+  .fault-btn{
+    width:100%; padding:9px; border-radius:10px; border:1px dashed var(--line); background:var(--surface-2);
+    color:var(--ink-dim); font-family:'Public Sans',sans-serif; font-weight:600; font-size:12.5px; cursor:pointer;
+  }
+  .fault-btn:hover{ border-color:var(--b); color:var(--b); }
+  .fault-btn.active{ border-style:solid; border-color:var(--b); color:var(--b); background:var(--b-dim); }
+
   .keyhint{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); line-height:1.6; }
   .keyhint b{ color:var(--ink); }
 
@@ -308,7 +330,7 @@
       <div id="predict-slot"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel commentary-panel">
       <p class="section-label">Commentary</p>
       <div id="commentary-slot"></div>
     </div>
@@ -325,13 +347,17 @@
       Tap <b>HIT</b> once per shot as the rally happens (optional — you can skip
       straight to the outcome), then tap <b>Point →</b> for whoever won it.
       A 1-hit point is an ace/double fault, 2 hits is a return winner/error, and
-      so on — the description is derived, never typed. Break/set/match points
+      so on — the description is derived, never typed. If the first serve is out,
+      tap <b>1st serve out</b> instead of an outcome button — it discards that
+      serve and waits for the second; tap it again if the second serve is out
+      too and the point ends itself as a double fault. Break/set/match points
       are tagged automatically and feed the Players tab's fatigue and clutch
       breakdowns.<br><br>
       On a keyboard: <kbd>A</kbd> / <kbd>L</kbd> log a hit (the same player can't
       hit twice in a row — a rally always alternates). <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd>
       ends the point for the left-hand player, <kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd>
-      ends it for the right-hand player. <kbd>T</kbd> discards a let/replay without scoring it.
+      ends it for the right-hand player. <kbd>F</kbd> marks a serve fault,
+      <kbd>T</kbd> discards a let/replay without scoring it.
     </p>
   </div>
 
@@ -580,7 +606,17 @@ function getDb(){
 }
 function genId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
-async function syncMatchToDb(){
+/* Writes are serialized through one chained promise so a slow save can
+   never land after a faster, newer one and silently overwrite it with
+   stale data — each call now waits for the previous write to finish
+   before it even builds its own snapshot of state.log. */
+let __dbSyncChain = Promise.resolve();
+function syncMatchToDb(){
+  __dbSyncChain = __dbSyncChain.then(syncMatchToDbNow, syncMatchToDbNow);
+  return __dbSyncChain;
+}
+
+async function syncMatchToDbNow(){
   if(state.isDemo || !state.matchId) return;
   const db = await getDb();
   if(!db) return;
@@ -591,11 +627,12 @@ async function syncMatchToDb(){
       startedAt: new Date(state.matchStartMs).toISOString(),
       updatedAt: new Date().toISOString(),
       winner: state.score.winner,
+      setsA: state.score.sets[0], setsB: state.score.sets[1],
       finalSets: state.score.sets,
       points: state.log.slice().reverse().map(e => ({
         server: e.server, winner: e.winner, n: e.hitters ? e.hitters.length : 1,
         pressure: !!e.isPressure, pressureType: e.pressureType || null,
-        gapMs: e.gapMs ?? null, rallyMs: e.rallyMs || [],
+        gapMs: e.gapMs ?? null, rallyMs: e.rallyMs || [], serveNumber: e.serveNumber || 1,
       })),
     };
     if(!state.dbCreated){ await ref.set(body); state.dbCreated = true; }
@@ -630,10 +667,15 @@ function buildCommentaryPrompt(){
     return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}${gap}`;
   }).join("\n");
 
-  const setsLine = state.score.setScores.length
-    ? state.score.setScores.map(([a,b])=>`${a}-${b}`).join(", ") + "; "
-    : "";
-  const scoreLine = `${state.nameA} vs ${state.nameB} — sets ${setsLine}current set ${state.score.games[0]}-${state.score.games[1]}`;
+  const [setsA, setsB] = state.score.sets;
+  const setsTally = `Sets: ${state.nameA} ${setsA} – ${state.nameB} ${setsB}` +
+    (setsA===setsB ? " (level)." : ` (${setsA>setsB?state.nameA:state.nameB} leads).`);
+  const finishedSetsDetail = state.score.setScores.length
+    ? ` Finished set scores so far, in order: ${state.score.setScores.map(([a,b])=>`${a}-${b}`).join(", ")}.`
+    : state.score.pointsPlayed===0 && setsA+setsB>0
+      ? " (Tracking picked up mid-match here, so the individual finished-set scores aren't known — only the sets tally above.)"
+      : "";
+  const scoreLine = `${setsTally}${finishedSetsDetail} Current set game score: ${state.nameA} ${state.score.games[0]} – ${state.nameB} ${state.score.games[1]} games.`;
   const statusLine = state.score.winner!=null
     ? `${state.score.winner===0?state.nameA:state.nameB} has won the match.`
     : "The match is still in progress.";
@@ -641,6 +683,8 @@ function buildCommentaryPrompt(){
   return `You are a tennis commentator working ONLY from point-by-point data recorded live during a real match between ${state.nameA} and ${state.nameB} (${FORMATS[state.fmtKey].label}).
 
 Each numbered line is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, any game/set/match event, and the seconds since the previous point (a rough pace/fatigue signal — rising gaps or slower rallies later on may indicate tiring, but only say so if the numbers actually show it).
+
+The scores below are ground truth — state them exactly as given and never contradict yourself about who leads. In particular, "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
 ${scoreLine}
 ${statusLine}
@@ -735,10 +779,10 @@ function demoState(){
     const server=score.server;
     serverPts[server][winner===server?0:1]+=1;
     const events=awardPoint(score,winner,fmt);
-    log.unshift({ desc:describeRally(hitters,winner,server), server, winner, hitters, events, line:scoreLineShort(score) });
+    log.unshift({ desc:describeRally(hitters,winner,server,1), server, winner, hitters, events, line:scoreLineShort(score), serveNumber:1 });
   }
   return {
-    nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], isDemo:true,
+    nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], serveFaults:0, isDemo:true,
     matchId:null, matchStartMs:null, lastPointMs:null, dbCreated:false,
     gamesCompleted:0, setsCompleted:0,
   };
@@ -746,7 +790,7 @@ function demoState(){
 function startFreshMatch(){
   const keepNames = { nameA: state.nameA, nameB: state.nameB, fmtKey: state.fmtKey };
   state = {
-    ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[],
+    ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[], serveFaults:0,
     history:[], isDemo:false,
     matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
     gamesCompleted:0, setsCompleted:0,
@@ -755,11 +799,14 @@ function startFreshMatch(){
   commentaryState = { loading:false, text:"", error:null, truncated:false };
 }
 
-function describeRally(hitters,winner,server){
+function describeRally(hitters,winner,server,serveNumber){
   const h=hitters.length?hitters:[server];
   const n=h.length, last=h[h.length-1];
   const end = winner===last?"winner":"error";
-  if(n===1) return end==="winner" ? "ace / service winner" : "double fault";
+  if(n===1){
+    if(end==="error") return "double fault";
+    return serveNumber===2 ? "2nd-serve ace" : "ace / service winner";
+  }
   if(n===2) return `return ${end}`;
   return `${n}-shot rally, ${last===0?"A":"B"} ${end} on shot ${n}`;
 }
@@ -771,6 +818,7 @@ function scoreLineShort(s){
 let state = load() || demoState();
 state.rally = state.rally || [];
 state.rallyTimes = state.rallyTimes || [];
+if(state.serveFaults === undefined) state.serveFaults = 0;
 state.history = state.history || [];
 if(state.matchId === undefined) state.matchId = null;
 if(state.matchStartMs === undefined) state.matchStartMs = null;
@@ -944,6 +992,11 @@ function renderControls(score, nameA, nameB){
       <button class="tap a" id="hitA">HIT<small>${escapeHtml(nameA)}</small><kbd>A</kbd></button>
       <button class="tap b" id="hitB">HIT<small>${escapeHtml(nameB)}</small><kbd>L</kbd></button>
     </div>
+    <button class="fault-btn ${state.serveFaults>=1?'active':''}" id="faultBtn" style="margin-top:8px;">
+      ${state.serveFaults>=1
+        ? `2nd serve out too → double fault, point to ${escapeHtml(score.server===0?nameB:nameA)}`
+        : `1st serve out (${escapeHtml(score.server===0?nameA:nameB)}'s fault)`}
+    </button>
     <div class="outgrid" style="margin-top:10px;">
       <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}<span class="kbd-hint"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></span></button>
       <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}<span class="kbd-hint"><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></span></button>
@@ -1012,11 +1065,29 @@ function addHit(side){
   save(); render();
 }
 
+function addFault(){
+  if(state.score.winner !== null) return;
+  if(state.isDemo) startFreshMatch();
+  if(state.serveFaults >= 1){
+    // second serve out too: point ends immediately, no outcome tap needed
+    finalizePoint(1 - state.score.server);
+    return;
+  }
+  // first serve out: discard that serve attempt (if it was tapped) and wait for the second
+  const server = state.score.server;
+  if(state.rally.length && state.rally[state.rally.length-1] === server){
+    state.rally.pop(); state.rallyTimes.pop();
+  }
+  state.serveFaults = 1;
+  save(); render();
+}
+
 function finalizePoint(winner){
   if(state.isDemo) startFreshMatch();
   const fmt = FORMATS[state.fmtKey];
   const server = state.score.server;
   const hitters = state.rally.length ? state.rally.slice() : [server];
+  const serveNumber = state.serveFaults >= 1 ? 2 : 1;
   const { isPressure, pressureType } = pressureInfo(state.score, fmt);
 
   const now = Date.now();
@@ -1040,11 +1111,11 @@ function finalizePoint(winner){
   if(events.some(e=>e.startsWith("game")||e.startsWith("BREAK"))) state.gamesCompleted += 1;
   if(events.some(e=>e.startsWith("SET"))) state.setsCompleted += 1;
   state.log.unshift({
-    desc: describeRally(hitters, winner, server),
+    desc: describeRally(hitters, winner, server, serveNumber),
     server, winner, hitters, events, line: scoreLineShort(state.score),
-    isPressure, pressureType, tMs: now, gapMs, rallyMs,
+    isPressure, pressureType, tMs: now, gapMs, rallyMs, serveNumber,
   });
-  state.rally = []; state.rallyTimes = [];
+  state.rally = []; state.rallyTimes = []; state.serveFaults = 0;
   state.lastPointMs = now;
   save(); render();
   syncMatchToDb();
@@ -1128,6 +1199,7 @@ document.addEventListener("click", (e) => {
   else if(id==="hitB"){ addHit(1); }
   else if(id==="winA"){ finalizePoint(0); }
   else if(id==="winB"){ finalizePoint(1); }
+  else if(id==="faultBtn"){ addFault(); }
   else if(id==="undoTap"){ state.rally.pop(); state.rallyTimes.pop(); save(); render(); }
   else if(id==="removeLastPoint"){ removeLastPoint(); }
   else if(id==="removeLastGame"){ removeLastGame(); }
@@ -1197,6 +1269,9 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     state.rally = []; state.rallyTimes = [];
     save(); render();
+  } else if(key === "f"){
+    e.preventDefault();
+    addFault();
   }
 });
 
