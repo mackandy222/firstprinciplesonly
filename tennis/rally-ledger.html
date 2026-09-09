@@ -738,6 +738,35 @@ function computePatterns(points, nameA, nameB){
       : `Momentum has stayed fairly steady — ${nameA} won ${a1}% of points in the first half recorded vs ${a2}% in the second half.`);
   }
 
+  // Time between shots WITHIN a rally (tap-to-tap while the ball is live) —
+  // not the same signal as time between points, which is banned because it
+  // mostly reflects how fast the user hits the app's buttons. Only points
+  // logged live carry rallyMs; catch-up-seeded history has none, so joining
+  // a match late simply contributes zero samples rather than skewing the
+  // average toward some default.
+  const allIntervals = [];
+  for(const p of points){
+    if(!p.rallyMs || !p.rallyMs.length) continue;
+    for(const ms of p.rallyMs){
+      if(ms >= 150 && ms <= 8000) allIntervals.push(ms); // drop mis-taps / stoppages
+    }
+  }
+  if(allIntervals.length >= 8){
+    const avg = arr => arr.reduce((a,b)=>a+b,0)/arr.length;
+    const overall = avg(allIntervals)/1000;
+    const half = Math.floor(allIntervals.length/2);
+    const first = allIntervals.slice(0,half), second = allIntervals.slice(half);
+    let trendNote = "";
+    if(first.length >= 4 && second.length >= 4){
+      const f1 = avg(first)/1000, f2 = avg(second)/1000;
+      const pctChange = Math.round(100*(f2-f1)/f1);
+      if(Math.abs(pctChange) >= 15){
+        trendNote = ` Shot pace has ${pctChange>0?"slowed":"quickened"} as the match has gone on — ${f1.toFixed(1)}s/shot early vs ${f2.toFixed(1)}s/shot more recently.`;
+      }
+    }
+    parts.push(`Average time between shots within rallies: ${overall.toFixed(1)}s (from ${allIntervals.length} recorded shot intervals; catch-up-seeded points contribute none, so this reflects only live-tracked play).${trendNote}`);
+  }
+
   return parts.join("\n");
 }
 
@@ -811,7 +840,7 @@ function buildMatchContext(){
     ? ""
     : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%. Fair decimal odds implied by that probability (1/probability, no bookmaker margin — these are the app's own projection, not a real market line): ${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}.`;
 
-  const body = `Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. There is no reliable timing data — never mention gaps, pace, or how long anything took.
+  const body = `Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. Gaps between separate points are NOT reliable timing data (they mostly reflect how fast the user tapped the app, not the players) — never mention them. The one exception is a "time between shots within rallies" figure in Patterns, if present: that's measured tap-to-tap while the ball was live and is safe to cite as a fact, including any stated pace trend — but don't speculate beyond what that line says (e.g. don't invent a reason like fatigue unless the data itself says so).
 
 The scores are ground truth — state them exactly as given and never contradict yourself about who leads. "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
@@ -833,7 +862,7 @@ function buildCommentaryPrompt(){
 
 ${ctx.body}
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, timing, or fatigue. No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). No preamble or heading, just the commentary itself.`;
 }
 
 function buildFollowUpPrompt(question, history){
@@ -847,7 +876,7 @@ ${ctx.body}
 ${historyText}
 Question: ${question}
 
-Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, timing, or fatigue (there's no reliable timing data). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
+Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
 }
 
 async function generateCommentary(){
