@@ -853,7 +853,7 @@ ${patterns}
 Points:
 ${lines}`;
 
-  return { body, oddsA, oddsB, decided: state.score.winner!=null };
+  return { body, oddsA, oddsB, pctA, pctB, decided: state.score.winner!=null };
 }
 
 function buildCommentaryPrompt(){
@@ -876,7 +876,7 @@ ${ctx.body}
 ${historyText}
 Question: ${question}
 
-Answer in 2-4 sentences, grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
+Answer in 1-2 short sentences — be as brief as the question allows, no throat-clearing. The fair odds and win probability are already shown to the user above your answer, so don't restate them unless the question is specifically about the odds themselves. Stay grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
 }
 
 async function generateCommentary(){
@@ -970,14 +970,22 @@ async function askFollowUp(){
   followUpState.pendingQ = question; followUpState.pendingA = ""; followUpState.draft = "";
   renderFollowUp();
 
+  // Odds are computed deterministically by the scoring model, not the LLM —
+  // prepend them ourselves so they're *always* shown, rather than trusting
+  // every generated answer to include them.
+  const ctx = buildMatchContext();
+  const oddsPrefix = ctx.decided
+    ? ""
+    : `Fair odds: ${state.nameA} ${ctx.oddsA} · ${state.nameB} ${ctx.oddsB}  (win% ${ctx.pctA}–${ctx.pctB})\n\n`;
+
   __followUpAbort = new AbortController();
   try{
     const { text } = await sample(buildFollowUpPrompt(question, followUpState.history), {
       signal: __followUpAbort.signal,
       modelTier: "complex",
-      onText: ({text}) => { followUpState.pendingA = text; renderFollowUp(); },
+      onText: ({text}) => { followUpState.pendingA = oddsPrefix + text; renderFollowUp(); },
     });
-    followUpState.history.push({ q: question, a: text });
+    followUpState.history.push({ q: question, a: oddsPrefix + text });
     followUpState.loading = false; followUpState.pendingQ = null; followUpState.pendingA = "";
   }catch(e){
     followUpState.loading = false;
