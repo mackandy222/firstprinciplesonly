@@ -237,6 +237,21 @@
   .fault-btn:hover{ border-color:var(--b); color:var(--b); }
   .fault-btn.active{ border-style:solid; border-color:var(--b); color:var(--b); background:var(--b-dim); }
 
+  .demeanor-block{ margin-top:10px; }
+  .demeanor-row{ display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .dem-name{
+    font-family:'Public Sans',sans-serif; font-weight:700; font-size:11.5px; width:50px; flex:none;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .dem-scale{ display:flex; gap:4px; }
+  .dem-btn{
+    border:1px solid var(--line); background:var(--surface-2); border-radius:8px; width:30px; height:30px;
+    font-size:15px; line-height:1; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center;
+  }
+  .dem-btn:active{ transform:scale(.9); }
+  .dem-btn.active{ border-color:var(--court); background:var(--surface); }
+  .dem-last{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--ink-dim); margin-left:auto; white-space:nowrap; }
+
   .keyhint{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim); line-height:1.6; }
   .keyhint b{ color:var(--ink); }
 
@@ -662,6 +677,11 @@ async function syncMatchToDbNow(){
       liveGames: state.score.games, livePoints: state.score.points,
       liveInTiebreak: state.score.inTiebreak, liveServer: state.score.server,
       liveSetScores: state.score.setScores,
+      // Manually recorded per-player demeanour readings (1=calm/focused to
+      // 5=visibly stressed), each anchored to pointIdx into the points
+      // array below — real observations for later model training, not a
+      // derived stat.
+      demeanor: state.demeanor,
       points: state.log.slice().reverse().map(e => ({
         server: e.server, winner: e.winner, n: e.hitters ? e.hitters.length : 1,
         pressure: !!e.isPressure, pressureType: e.pressureType || null,
@@ -695,9 +715,15 @@ let __commentaryAbort = null;
    Handing Claude real numbers instead of a raw point list to eyeball
    is deliberate: the sets-tally bug earlier showed it will confabulate
    a pattern narrative if it has to infer one itself. */
-function computePatterns(points, nameA, nameB){
+function computePatterns(points, nameA, nameB, demeanor){
   const n = points.length;
-  if(n < 3) return "Not enough points yet for pattern detection.";
+  const demeanorLines = computeDemeanorLines(points, nameA, nameB, demeanor);
+
+  if(n < 3){
+    return demeanorLines.length
+      ? demeanorLines.join("\n")
+      : "Not enough points yet for pattern detection.";
+  }
 
   let curSide = points[0].winner, curLen = 1, bestLen = 1, bestSide = curSide, bestEndIdx = 0;
   for(let i=1;i<n;i++){
@@ -767,7 +793,49 @@ function computePatterns(points, nameA, nameB){
     parts.push(`Average time between shots within rallies: ${overall.toFixed(1)}s (from ${allIntervals.length} recorded shot intervals; catch-up-seeded points contribute none, so this reflects only live-tracked play).${trendNote}`);
   }
 
+  parts.push(...demeanorLines);
+
   return parts.join("\n");
+}
+
+// Manually tapped readings (1=calm/focused .. 5=visibly stressed), each
+// anchored to pointIdx — the count of points completed at the moment it
+// was logged, which lines up with this same chronological "points" array.
+// Real observations, not inferred, so safe for the commentary to cite
+// directly rather than something it has to guess at.
+function computeDemeanorLines(points, nameA, nameB, demeanor){
+  if(!demeanor) return [];
+  const names = [nameA, nameB];
+  const lines = [];
+  for(let side=0; side<2; side++){
+    const readings = demeanor[side] || [];
+    if(!readings.length) continue;
+    const latest = readings[readings.length-1];
+    let line = `Demeanour recorded for ${names[side]}: ${readings.length} reading${readings.length===1?"":"s"}, latest ${latest.level}/5 (${DEM_LABELS[latest.level]}; scale is 1=calm/focused to 5=visibly stressed).`;
+
+    if(readings.length >= 4){
+      const half = Math.floor(readings.length/2);
+      const avg = arr => arr.reduce((a,r)=>a+r.level,0)/arr.length;
+      const a1 = avg(readings.slice(0,half)), a2 = avg(readings.slice(half));
+      if(Math.abs(a2-a1) >= 0.75){
+        line += ` Trending ${a2>a1?"more stressed":"calmer"} as the match has gone on (avg ${a1.toFixed(1)} early vs ${a2.toFixed(1)} more recently).`;
+      }
+    }
+
+    const perfAfter = filterFn => {
+      const windows = readings.filter(filterFn).map(r => points.slice(r.pointIdx, r.pointIdx+5)).filter(w => w.length>=3);
+      if(windows.length < 2) return null;
+      const flat = windows.flat();
+      const wins = flat.filter(p=>p.winner===side).length;
+      return `${Math.round(100*wins/flat.length)}% (n=${flat.length})`;
+    };
+    const calmPerf = perfAfter(r=>r.level<=2), stressPerf = perfAfter(r=>r.level>=4);
+    if(calmPerf && stressPerf){
+      line += ` Points ${names[side]} won in the few points right after a calm reading vs right after a stressed reading: ${calmPerf} vs ${stressPerf}.`;
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
 /* Shared match-grounding block for both commentary and the follow-up
@@ -781,7 +849,7 @@ function buildMatchContext(){
     const ev = e.events && e.events.length ? ` — ${e.events.join("; ")}` : "";
     return `${i+1}. [${srv} serve] ${e.desc}${tag} — score now ${e.line}${ev}`;
   }).join("\n");
-  const patterns = computePatterns(points, state.nameA, state.nameB);
+  const patterns = computePatterns(points, state.nameA, state.nameB, state.demeanor);
 
   const [setsA, setsB] = state.score.sets;
   const setsTally = `Sets: ${state.nameA} ${setsA} – ${state.nameB} ${setsB}` +
@@ -840,7 +908,7 @@ function buildMatchContext(){
     ? ""
     : `\nLive win probability, from the exact scoring-math model (same number the app's Predict panel shows, not a guess): ${state.nameA} ${pctA}% – ${state.nameB} ${pctB}%. Fair decimal odds implied by that probability (1/probability, no bookmaker margin — these are the app's own projection, not a real market line): ${state.nameA} ${oddsA}, ${state.nameB} ${oddsB}.`;
 
-  const body = `Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. Gaps between separate points are NOT reliable timing data (they mostly reflect how fast the user tapped the app, not the players) — never mention them. The one exception is a "time between shots within rallies" figure in Patterns, if present: that's measured tap-to-tap while the ball was live and is safe to cite as a fact, including any stated pace trend — but don't speculate beyond what that line says (e.g. don't invent a reason like fatigue unless the data itself says so).
+  const body = `Each numbered line under "Points" is one point, in order: who served, how the point ended (derived purely from how many times the ball was hit and who hit last — 1 hit is an ace or double fault, 2 hits is a return winner or error, "N-shot rally, X winner/error on shot N" for longer points), a bracketed tag when the point was a break/set/match point or part of a tiebreak, the score right after it, and any game/set/match event. "Patterns" below are pre-computed directly from that same point list — correct, verified numbers, not guesses. Gaps between separate points are NOT reliable timing data (they mostly reflect how fast the user tapped the app, not the players) — never mention them. The one exception is a "time between shots within rallies" figure in Patterns, if present: that's measured tap-to-tap while the ball was live and is safe to cite as a fact, including any stated pace trend — but don't speculate beyond what that line says (e.g. don't invent a reason like fatigue unless the data itself says so). Patterns may also include "Demeanour" lines for one or both players — these are real readings the scorer manually logged live (1=calm/focused to 5=visibly stressed), not inferred by you, so cite them the same way: state what's given (latest reading, a trend, a performance split) and never invent a psychological explanation the data doesn't state.
 
 The scores are ground truth — state them exactly as given and never contradict yourself about who leads. "game X" in a point's event means X held serve, "BREAK X" means X broke serve (the server lost that game) — read this directly from the event text, never infer it from vibes.
 
@@ -862,7 +930,7 @@ function buildCommentaryPrompt(){
 
 ${ctx.body}
 
-Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, or a long streak. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). No preamble or heading, just the commentary itself.`;
+Write a short, sharp recap — at most 2 short paragraphs, roughly 80-120 words total, not 3-5 paragraphs. Lead with whatever the Patterns actually show that's notable: a real momentum swing, who's winning more on their own shot vs handing points away with errors, a lopsided pressure-point split, a long streak, or a recorded demeanour trend/performance split. If nothing in Patterns stands out, say the match has been fairly even rather than inventing drama.${!ctx.decided ? ` End with a one-line read on who's likelier to win from here and why, quoting the exact fair odds given above for both players (e.g. "${state.nameA} ${ctx.oddsA}, ${state.nameB} ${ctx.oddsB}") — ground it in the win-probability number plus whichever Pattern best explains it, not a separate guess.` : " End with a one-line verdict on how the match ended."} Stay strictly grounded in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, fatigue, or a player's mental state beyond what Patterns explicitly states (the shot-interval line and any demeanour readings there, if present, are real recorded data — fine to cite, including a stated trend or performance split — but don't invent a cause beyond what's written; gaps between separate points are not reliable data — don't mention those). No preamble or heading, just the commentary itself.`;
 }
 
 function buildFollowUpPrompt(question, history){
@@ -876,7 +944,7 @@ ${ctx.body}
 ${historyText}
 Question: ${question}
 
-Answer in 1-2 short sentences — be as brief as the question allows, no throat-clearing. The fair odds and win probability are already shown to the user above your answer, so don't restate them unless the question is specifically about the odds themselves. Stay grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace or fatigue beyond what Patterns explicitly states (the shot-interval line there, if present, is real measured data and fine to cite; gaps between separate points are not — don't mention those). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
+Answer in 1-2 short sentences — be as brief as the question allows, no throat-clearing. The fair odds and win probability are already shown to the user above your answer, so don't restate them unless the question is specifically about the odds themselves. Stay grounded strictly in the data above — never invent a shot, rally, or score that isn't in the list (including a finished set explicitly marked as having no known score — say only who won it, nothing else), and never speculate about pace, fatigue, or a player's mental state beyond what Patterns explicitly states (the shot-interval line and any demeanour readings there, if present, are real recorded data — fine to cite, including a stated trend or performance split — but don't invent a cause beyond what's written; gaps between separate points are not reliable data — don't mention those). If the data genuinely doesn't support an answer, say so plainly rather than guessing. No preamble, just the answer.`;
 }
 
 async function generateCommentary(){
@@ -1049,7 +1117,7 @@ function demoState(){
   return {
     nameA:"A", nameB:"B", fmtKey, score, serverPts, log, rally:[], rallyTimes:[], rallyTokens:[], serveFaults:0, isDemo:true,
     matchId:null, matchStartMs:null, lastPointMs:null, dbCreated:false,
-    gamesCompleted:0, setsCompleted:0,
+    gamesCompleted:0, setsCompleted:0, demeanor:{0:[],1:[]},
   };
 }
 function startFreshMatch(){
@@ -1058,7 +1126,7 @@ function startFreshMatch(){
     ...keepNames, score:newScore(0), serverPts:[[0,0],[0,0]], log:[], rally:[], rallyTimes:[], rallyTokens:[], serveFaults:0,
     history:[], isDemo:false,
     matchId: genId(), matchStartMs: Date.now(), lastPointMs: null, dbCreated:false,
-    gamesCompleted:0, setsCompleted:0,
+    gamesCompleted:0, setsCompleted:0, demeanor:{0:[],1:[]},
   };
   if(__commentaryAbort) __commentaryAbort.abort();
   commentaryState = { loading:false, text:"", error:null, truncated:false };
@@ -1101,6 +1169,9 @@ if(state.lastPointMs === undefined) state.lastPointMs = null;
 if(state.dbCreated === undefined) state.dbCreated = false;
 if(state.gamesCompleted === undefined) state.gamesCompleted = 0;
 if(state.setsCompleted === undefined) state.setsCompleted = 0;
+if(!state.demeanor) state.demeanor = {0:[],1:[]};
+if(!state.demeanor[0]) state.demeanor[0] = [];
+if(!state.demeanor[1]) state.demeanor[1] = [];
 
 let catchUpOpen = false;
 
@@ -1236,6 +1307,39 @@ function renderScorecard(score, nameA, nameB){
     </div>`;
 }
 
+const DEM_EMOJI = ["😄","🙂","😐","😕","😣"];
+const DEM_LABELS = {1:"calm/focused",2:"relaxed",3:"neutral",4:"tense",5:"visibly stressed"};
+
+// Manually tapped by the scorer, not detected — a real observation of the
+// player tied to the point index at the moment it was logged, so it can
+// both feed the live commentary now and be exported later to train a
+// model. pointIdx anchors it to the same chronological "points" array
+// buildMatchContext() derives from state.log, regardless of when this
+// match was started or joined.
+function logDemeanor(side, level){
+  if(state.score.winner!==null) return;
+  state.demeanor[side].push({ level, pointIdx: state.log.length, tMs: Date.now() });
+  save();
+  renderControls(state.score, state.nameA, state.nameB);
+  syncMatchToDb();
+}
+
+function demRow(side, nameX){
+  const readings = state.demeanor[side];
+  const last = readings.length ? readings[readings.length-1] : null;
+  const btns = DEM_EMOJI.map((emo,i) => {
+    const level = i+1;
+    return `<button class="dem-btn${last && last.level===level ? " active" : ""}" data-side="${side}" data-level="${level}" title="${DEM_LABELS[level]}">${emo}</button>`;
+  }).join("");
+  const lastLabel = last ? `last: ${last.level}/5` : "none yet";
+  return `
+    <div class="demeanor-row">
+      <span class="dem-name">${escapeHtml(nameX)}</span>
+      <div class="dem-scale">${btns}</div>
+      <span class="dem-last">${lastLabel}</span>
+    </div>`;
+}
+
 function renderControls(score, nameA, nameB){
   const haveHistory = state.history && state.history.length;
   const removeRow = `
@@ -1280,6 +1384,12 @@ function renderControls(score, nameA, nameB){
     <div class="outgrid" style="margin-top:10px;">
       <button class="outbtn a" id="winA">Point → ${escapeHtml(nameA)}<span class="kbd-hint"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></span></button>
       <button class="outbtn b" id="winB">Point → ${escapeHtml(nameB)}<span class="kbd-hint"><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></span></button>
+    </div>
+    <div class="demeanor-block">
+      <p class="section-label">Demeanour</p>
+      <p class="predict-caption" style="margin:2px 0 4px;">😄 calm/focused → 😣 stressed — tap to log; feeds the commentary now and exports for training later.</p>
+      ${demRow(0, nameA)}
+      ${demRow(1, nameB)}
     </div>
     ${removeRow}`;
 }
@@ -1531,6 +1641,8 @@ document.addEventListener("click", (e) => {
   else {
     const stepBtn = e.target.closest ? e.target.closest(".stepper") : null;
     if(stepBtn){ adjustPoint(Number(stepBtn.dataset.side), Number(stepBtn.dataset.dir)); return; }
+    const demBtn = e.target.closest ? e.target.closest(".dem-btn") : null;
+    if(demBtn){ logDemeanor(Number(demBtn.dataset.side), Number(demBtn.dataset.level)); return; }
     const row = e.target.closest ? e.target.closest(".player-row") : null;
     if(row){ playersView.selected = row.dataset.player; playersView.screen="profile"; renderPlayersView(); }
   }
